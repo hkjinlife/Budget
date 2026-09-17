@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="우리집 가계부">
+<meta name="theme-color" content="#1f3864">
+<title>우리집 가계부</title>
+<link rel="stylesheet" href="app.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<script src="vendor/chart.umd.min.js" defer></script>
+<script src="vendor/xlsx.full.min.js" defer></script>
+</head>
+<body data-palette="#2a78d6,#eb6834,#1baf7a,#eda100,#e87ba4,#008300,#4a3aa7,#e34948">
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1>우리집 가계부</h1>
+    <div class="save-state" id="saveState" title="저장 상태">불러오는 중…</div>
+  </div>
+  <div class="topbar-row">
+    <div class="segmented" id="userSwitch" role="tablist" aria-label="사용자 선택"></div>
+    <div class="btn-row">
+      <button class="btn btn-quiet" id="editBtn" type="button" aria-pressed="false">편집</button>
+      <button class="btn btn-quiet" id="saveBtn" type="button">저장</button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist">
+    <button class="tab is-active" data-view="dashboard" role="tab">대시보드</button>
+    <button class="tab" data-view="invest" role="tab">투자</button>
+    <button class="tab" data-view="loan" role="tab">대출</button>
+    <button class="tab" data-view="report" role="tab">리포트</button>
+    <button class="tab" data-view="transactions" role="tab">거래내역</button>
+    <button class="tab" data-view="entry" role="tab">입력</button>
+    <button class="tab" data-view="settings" role="tab">설정</button>
+  </nav>
+</header>
+
+<main id="app" class="app"></main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
