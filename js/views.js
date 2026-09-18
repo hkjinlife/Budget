@@ -88,7 +88,7 @@ function mountWelcome() {
       state.data.onboarded = true;
       touch();
       renderUserSwitch();
-      toast('시작합니다. 입력 탭에서 거래를 적어보세요.');
+      toast('시작합니다. 가계부 탭에서 거래를 적어보세요.');
       render();
     };
   }
@@ -116,7 +116,7 @@ export function dashboard() {
   if (!mos.length) {
     if (!state.data.onboarded) return welcome();
     return `<div class="card"><h2>아직 거래가 없습니다</h2>
-      <p class="muted">아래 <b>입력</b> 탭에서 직접 적거나, 카드사·은행 파일을 올리면 채워집니다.</p>
+      <p class="muted">위쪽 <b>가계부</b> 탭에서 날짜를 눌러 적거나, 월말 정리에서 카드사·은행 파일을 올리면 채워집니다.</p>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-primary" data-goto="entry">거래 입력하러 가기</button>
       </div></div>`;
@@ -1037,11 +1037,24 @@ export function invest() {
       <tbody id="flowBody"></tbody></table></div>
   </div>
 
-  ${(state.data.otherAssets || []).length ? `<div class="card">
-    <div class="card-head"><h2>그 밖의 자산</h2><span class="muted">직접 기록</span></div>
-    <div class="table-wrap"><table><thead><tr><th>자산</th><th class="num">평가</th><th class="num">취득·원금</th><th>메모</th></tr></thead>
-    <tbody>${state.data.otherAssets.map((a) => `<tr><td>${esc(a.name)}</td><td class="num">${M.won(a.value)}</td>
-      <td class="num">${M.won(a.principal)}</td><td>${esc(a.memo || '')}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+  ${(state.data.otherAssets || []).length || editable() ? `<div class="card">
+    <div class="card-head"><h2>그 밖의 자산</h2>
+      ${editable() ? '<button class="btn" id="addOther">+ 자산 추가</button>' : '<span class="muted">부동산·연금·청약·보험 등</span>'}</div>
+    ${editable() ? '' : lockNote('자산 금액')}
+    <div class="table-wrap"><table><thead><tr><th>자산</th><th class="num">평가</th><th class="num">취득·원금</th><th class="num">손익</th><th>메모</th>${editable() ? '<th></th>' : ''}</tr></thead>
+    <tbody>${(state.data.otherAssets || []).map((a, i) => (editable() ? `<tr data-other="${i}">
+        <td><input data-f="name" value="${esc(a.name)}" style="min-width:160px"></td>
+        <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${a.value || 0}" style="min-width:120px;text-align:right"></td>
+        <td class="num"><input data-f="principal" type="number" inputmode="numeric" value="${a.principal || 0}" style="min-width:120px;text-align:right"></td>
+        <td class="num muted">${a.principal ? M.won((a.value || 0) - a.principal, { sign: true }) : '-'}</td>
+        <td><input data-f="memo" value="${esc(a.memo || '')}" style="min-width:120px"></td>
+        <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
+    : `<tr><td>${esc(a.name)}</td><td class="num">${M.won(a.value)}</td>
+        <td class="num">${M.won(a.principal)}</td>
+        <td class="num ${(a.value || 0) - (a.principal || 0) >= 0 ? 'pos' : 'neg'}">${a.principal ? `${M.won((a.value || 0) - a.principal, { sign: true })} (${M.pct(((a.value || 0) - a.principal) / a.principal)})` : '-'}</td>
+        <td>${esc(a.memo || '')}${a.updatedAt ? ` <span class="muted">${esc(a.updatedAt.slice(5))}</span>` : ''}</td></tr>`)).join('')}</tbody></table></div>
+    ${editable() ? '<p class="muted" style="margin-top:8px">매달 금액은 월말 정리에서 넣는 게 편합니다. 여기서는 이름·원금을 고치거나 새 자산을 추가할 때 쓰세요.</p>' : ''}
+  </div>` : ''}`;
 }
 
 function mountInvest() {
@@ -1135,6 +1148,33 @@ function mountInvest() {
     touch(); drawFlow(); refreshInvest();
   };
   drawHold(); drawFlow();
+
+  // 그 밖의 자산 편집
+  document.querySelectorAll('[data-other]').forEach((tr) => {
+    const a = state.data.otherAssets[Number(tr.dataset.other)];
+    tr.querySelectorAll('[data-f]').forEach((el) => {
+      const f = el.dataset.f;
+      if (f === 'del') {
+        el.onclick = () => {
+          if (!confirm(`'${a.name}'을(를) 지울까요?`)) return;
+          state.data.otherAssets.splice(Number(tr.dataset.other), 1);
+          touch(); render();
+        };
+      } else {
+        el.onchange = () => {
+          a[f] = el.type === 'number' ? Number(el.value) || 0 : el.value;
+          if (f === 'value') a.updatedAt = today();
+          touch(); render();
+        };
+      }
+    });
+  });
+  const addOther = document.getElementById('addOther');
+  if (addOther) addOther.onclick = () => {
+    state.data.otherAssets ||= [];
+    state.data.otherAssets.push({ name: '새 자산', value: 0, principal: 0, memo: '', updatedAt: today() });
+    touch(); render();
+  };
 }
 
 
@@ -1491,10 +1531,10 @@ export function settings() {
     <div class="card-head"><h2>화면 구성</h2><span class="muted">이 기기에만 적용됩니다</span></div>
     <label class="field">보이는 탭
       <select id="uiSimple">
-        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (월말 정리·투자·대출·리포트 포함)</option>
-        <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·입력·거래내역·설정)</option>
+        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (대시보드·가계부·투자·대출·리포트·거래내역·월말 정리·설정)</option>
+        <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·가계부·거래내역·설정)</option>
       </select></label>
-    <p class="muted">월말 정리·투자·대출·리포트를 안 쓰는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
+    <p class="muted">투자·대출·리포트·월말 정리를 안 쓰는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
   </div>
 
   <div class="card">
