@@ -30,15 +30,24 @@ export function isConfigured() {
 }
 
 /* ---------- 구글 라이브러리 불러오기 ---------- */
+// 앱을 열 때 미리 불러오기 시작하므로, 다 받기 전에 버튼을 누르면 받기가 끝날 때까지 기다려야 한다
+// (예전엔 script 태그가 있으면 바로 넘어가서 "Can't find variable: google"이 났다)
+const loading = new Map();
 function loadScript(src) {
-  return new Promise((res, rej) => {
-    if (document.querySelector(`script[src="${src}"]`)) { res(); return; }
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = res;
-    s.onerror = () => rej(new Error('구글 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요.'));
-    document.head.appendChild(s);
-  });
+  if (!loading.has(src)) {
+    loading.set(src, new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = res;
+      s.onerror = () => {
+        loading.delete(src);      // 다음에 누르면 다시 받아본다
+        s.remove();
+        rej(new Error('구글 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요.'));
+      };
+      document.head.appendChild(s);
+    }));
+  }
+  return loading.get(src);
 }
 
 /* ---------- 로그인 ---------- */
