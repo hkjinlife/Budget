@@ -1,7 +1,9 @@
 // 오프라인 대응.
 // 앱 코드(HTML·CSS·JS)는 "새 것 먼저, 안 되면 캐시" — 업데이트가 바로 반영된다.
+// 브라우저가 앱 코드를 10분씩 들고 있지 않도록, 매번 서버에 바뀌었는지 물어본다(no-cache).
+// 안 바뀌었으면 서버가 '그대로'라고만 답하므로 느려지지 않는다.
 // 라이브러리·아이콘은 "캐시 먼저" — 잘 바뀌지 않고 용량이 크다.
-const CACHE = 'budget-app-v4';
+const CACHE = 'budget-app-v5';
 const SHELL = [
   './',
   './index.html',
@@ -24,7 +26,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -51,9 +55,11 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (!isAppCode(url)) return;   // 데이터 파일 등은 손대지 않는다
-  // 새 것 먼저, 인터넷이 없으면 캐시
+  // 새 것 먼저, 인터넷이 없으면 캐시.
+  // 페이지 이동(주소 입력·홈 화면 아이콘)은 요청을 그대로 둔다 — 주소 끝 '/' 리다이렉트를 브라우저가 처리해야 한다.
+  const fresh = request.mode === 'navigate' ? request : new Request(request, { cache: 'no-cache' });
   e.respondWith(
-    fetch(request)
+    fetch(fresh)
       .then((res) => {
         if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(request, copy)); }
         return res;
