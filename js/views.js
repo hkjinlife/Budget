@@ -937,27 +937,35 @@ function mountMonthly() {
     toast(`${it.name}: ${koWon(value)} 저장했습니다.`);
     render();
   };
+  // '만원'인 채로 원 단위 숫자를 넣으면 1만 배가 된다. 만원으로 100만(=100억) 이상이면 원 단위로 적은 것으로 본다.
+  const toWon = (raw, unit) => {
+    const n = Number(raw || 0);
+    return Number(unit) === 10000 && n >= 1000000 ? Math.round(n) : Math.round(n * Number(unit));
+  };
+  const unitNote = (raw, unit) => (Number(unit) === 10000 && Number(raw || 0) >= 1000000 ? ' (원 단위로 적은 것으로 봤어요)' : '');
   document.querySelectorAll('[data-assetval]').forEach((input) => {
     const id = input.dataset.assetval;
     const unit = document.querySelector(`[data-assetunit="${id}"]`);
     const preview = document.querySelector(`[data-assetpreview="${id}"]`);
-    const calc = () => Math.round(Number(input.value || 0) * Number(unit.value));
-    const show = () => { if (input.value) preview.textContent = `= ${koWon(calc())}`; };
+    const calc = () => toWon(input.value, unit.value);
+    const show = () => { if (input.value) preview.textContent = `= ${koWon(calc())}${unitNote(input.value, unit.value)}`; };
     input.addEventListener('input', show);
     unit.addEventListener('change', show);
     const pIn = document.querySelector(`[data-assetprin="${id}"]`);
     const pUnit = document.querySelector(`[data-prinunit="${id}"]`);
     const pPrev = document.querySelector(`[data-prinpreview="${id}"]`);
-    const calcP = () => (pIn && pIn.value ? Math.round(Number(pIn.value) * Number(pUnit.value)) : null);
+    const calcP = () => (pIn && pIn.value ? toWon(pIn.value, pUnit.value) : null);
     if (pIn) {
       const showP = () => {
         const p2 = calcP();
         if (!p2) return;
         const v = calc();
-        pPrev.textContent = `= ${koWon(p2)}${v ? ` · 손익 ${M.won(v - p2, { sign: true })} (${M.pct((v - p2) / p2)})` : ''}`;
+        pPrev.textContent = `= ${koWon(p2)}${unitNote(pIn.value, pUnit.value)}${v ? ` · 손익 ${M.won(v - p2, { sign: true })} (${M.pct((v - p2) / p2)})` : ''}`;
       };
+      // 평가금액과 원금의 단위는 함께 바뀐다 (한쪽만 '원'으로 바꿔서 원금이 1만 배가 되는 일을 막는다)
+      unit.addEventListener('change', () => { pUnit.value = unit.value; show(); showP(); });
+      pUnit.addEventListener('change', () => { unit.value = pUnit.value; show(); showP(); });
       pIn.addEventListener('input', showP);
-      pUnit.addEventListener('change', showP);
       input.addEventListener('input', showP);
     }
     document.querySelector(`[data-assetsave="${id}"]`).onclick = () => {
@@ -1006,8 +1014,8 @@ function mountMonthly() {
       // 이번 달 원금 변동 → 투자 원금 기록
       const it2 = M.checklist().find((x) => x.id === id);
       const group = it2?.group || 'jeonbuk';
-      const inAmt = Math.round(Number(document.querySelector(`[data-flowin="${id}"]`)?.value || 0) * 10000);
-      const outAmt = Math.round(Number(document.querySelector(`[data-flowout="${id}"]`)?.value || 0) * 10000);
+      const inAmt = toWon(document.querySelector(`[data-flowin="${id}"]`)?.value, 10000);
+      const outAmt = toWon(document.querySelector(`[data-flowout="${id}"]`)?.value, 10000);
       const flows = state.data.investment.flows ||= [];
       const memo = `${month} 월말 정리 입력`;
       // 같은 달에 다시 저장하면 앞에 적은 값을 바꾼다 (두 번 더해지지 않게)
@@ -1079,17 +1087,8 @@ export function invest() {
     ${editable() ? '<p class="muted" style="margin-top:8px">평가금액만 바꾸면 위 성과가 바로 다시 계산됩니다.</p>' : ''}
   </div>
 
-  <div class="card">
-    <div class="card-head"><h2>원금 입금·출금 내역</h2>
-      ${editable() ? '<button class="btn" id="addFlow">+ 내역 추가</button>' : ''}</div>
-    <p class="muted">입금은 양수(+), 출금은 음수(−). '원금 반영'을 끄면 계좌 안에서 옮긴 돈으로 보고 원금에서 뺍니다.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>날짜</th><th>내용</th><th>구분</th><th class="num">금액</th><th>원금 반영</th><th>메모</th>${editable() ? '<th></th>' : ''}</tr></thead>
-      <tbody id="flowBody"></tbody></table></div>
-  </div>
-
   ${(state.data.otherAssets || []).length || editable() ? `<div class="card">
-    <div class="card-head"><h2>그 밖의 자산</h2>
+    <div class="card-head"><h2>기타 자산</h2>
       ${editable() ? '<button class="btn" id="addOther">+ 자산 추가</button>' : '<span class="muted">부동산·연금·청약·보험 등</span>'}</div>
     ${editable() ? '' : lockNote('자산 금액')}
     <div class="table-wrap"><table><thead><tr><th>자산</th><th class="num">평가</th><th class="num">취득·원금</th><th class="num">손익</th><th>메모</th>${editable() ? '<th></th>' : ''}</tr></thead>
@@ -1105,11 +1104,23 @@ export function invest() {
         <td class="num ${(a.value || 0) - (a.principal || 0) >= 0 ? 'pos' : 'neg'}">${a.principal ? `${M.won((a.value || 0) - a.principal, { sign: true })} (${M.pct(((a.value || 0) - a.principal) / a.principal)})` : '-'}</td>
         <td>${esc(a.memo || '')}${a.updatedAt ? ` <span class="muted">${esc(a.updatedAt.slice(5))}</span>` : ''}</td></tr>`)).join('')}</tbody></table></div>
     ${editable() ? '<p class="muted" style="margin-top:8px">매달 금액은 월말 정리에서 넣는 게 편합니다. 여기서는 이름·원금을 고치거나 새 자산을 추가할 때 쓰세요.</p>' : ''}
-  </div>` : ''}`;
+  </div>` : ''}
+
+  <details class="card fold" id="flowFold" ${state.ui.flowsOpen ? 'open' : ''}>
+    <summary><h2>원금 입금·출금 내역</h2><span class="muted">${(inv.flows || []).length}건</span></summary>
+    ${editable() ? '<div class="btn-row" style="margin-bottom:8px"><button class="btn" id="addFlow">+ 내역 추가</button></div>' : ''}
+    <p class="muted">입금은 양수(+), 출금은 음수(−). '원금 반영'을 끄면 계좌 안에서 옮긴 돈으로 보고 원금에서 뺍니다.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>날짜</th><th>내용</th><th>구분</th><th class="num">금액</th><th>원금 반영</th><th>메모</th>${editable() ? '<th></th>' : ''}</tr></thead>
+      <tbody id="flowBody"></tbody></table></div>
+  </details>`;
 }
 
 function mountInvest() {
   const inv = state.data.investment;
+  // 원금 내역은 길어지므로 접어 두고, 펼친 상태는 기억한다 (편집하다 다시 그려도 그대로)
+  const fold = document.getElementById('flowFold');
+  if (fold) fold.ontoggle = () => { state.ui.flowsOpen = fold.open; saveUIState(); };
   const s = M.investSummary();
   const rows = [];
   if (s.fund) rows.push({ name: '펀드', ...s.fund });
@@ -1200,7 +1211,7 @@ function mountInvest() {
   };
   drawHold(); drawFlow();
 
-  // 그 밖의 자산 편집
+  // 기타 자산 편집
   document.querySelectorAll('[data-other]').forEach((tr) => {
     const a = state.data.otherAssets[Number(tr.dataset.other)];
     tr.querySelectorAll('[data-f]').forEach((el) => {
