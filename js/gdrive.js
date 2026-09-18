@@ -117,6 +117,10 @@ export function signOut() {
 }
 
 /* ---------- 파일 고르기 / 만들기 ---------- */
+// 구글 클라우드 프로젝트 번호 (클라이언트 ID 앞부분). 권한이 drive.file(앱이 만들거나 고른 파일만)이라,
+// 파일 고르기 창에 이 번호를 알려줘야 드라이브 웹에서 직접 올린 파일도 앱이 읽을 수 있다.
+const appId = () => String(CONFIG.googleClientId || '').split('-')[0];
+
 export async function pickFile() {
   const tk = await token();
   await loadScript('https://apis.google.com/js/api.js');
@@ -133,6 +137,7 @@ export async function pickFile() {
     const picker = new google.picker.PickerBuilder()
       .setOAuthToken(tk)
       .setDeveloperKey(CONFIG.googleApiKey)
+      .setAppId(appId())
       .setLocale('ko')
       .addView(mine)
       .addView(shared)
@@ -164,6 +169,7 @@ export async function pickFolder() {
     const picker = new google.picker.PickerBuilder()
       .setOAuthToken(tk)
       .setDeveloperKey(CONFIG.googleApiKey)
+      .setAppId(appId())
       .setLocale('ko')
       .addView(folders)
       .setTitle('가계부 파일을 둘 폴더 고르기')
@@ -240,6 +246,7 @@ export async function pull({ merge, interactive = true }) {
     const r = await fetch(`https://www.googleapis.com/drive/v3/files/${drive.fileId}?alt=media`, {
       headers: { Authorization: `Bearer ${tk}` },
     });
+    if (r.status === 404) throw new Error('앱이 이 파일을 열 권한이 없습니다 (404). 설정 → 드라이브 파일 고르기로 파일을 다시 골라주세요.');
     if (!r.ok) throw new Error(`파일을 읽지 못했습니다 (${r.status})`);
     const incoming = await r.json();
     const info = await meta();
