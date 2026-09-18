@@ -146,6 +146,12 @@ export const DEFAULT_CATEGORIES = [
   "keywords": "아주오토|볼보|테슬라"
  },
  {
+  "id": "once_big",
+  "name": "일회성 큰 지출",
+  "major": "일회성",
+  "keywords": ""
+ },
+ {
   "id": "tax_big",
   "name": "세금(대형·일회성)",
   "major": "일회성",
@@ -248,6 +254,10 @@ function normalize(d) {
   d.budgets ||= {};
   d.monthly ||= {};
   d.otherAssets ||= [];
+  // 한 번만 있는 큰 지출(가전·수리 등)을 모으는 카테고리. 예전 데이터에도 넣어준다
+  if (d.categories.length && !d.categories.some((c) => c.id === 'once_big')) {
+    d.categories.push({ id: 'once_big', name: '일회성 큰 지출', major: '일회성', keywords: '' });
+  }
   // 예전 자료에서 같은 날 같은 거래 여러 건(예: 연금저축 10만원 ×4)이 같은 id를 받은 경우가 있다.
   // 기기마다 같은 결과가 나오도록 두 번째부터 순서대로 _2, _3을 붙인다.
   const ids = new Set();

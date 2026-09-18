@@ -124,8 +124,8 @@ export function dashboard() {
   const cur = state.ui.month && mos.includes(state.ui.month) ? state.ui.month : mos[mos.length - 1];
   state.ui.month = cur;
   const totals = M.monthTotals();
-  const full = M.fullMonths();
-  const avgBase = full.length ? full.slice(-2) : [];
+  // 평균은 고른 달 바로 앞의 '온전한 달' 두 개 (지난 달을 볼 때 나중 달과 비교하지 않도록)
+  const avgBase = M.fullMonths().filter((mo) => mo < cur).slice(-2);
   const avg = (key) => (avgBase.length
     ? avgBase.reduce((s, mo) => s + (totals.get(mo)?.[key] || 0), 0) / avgBase.length : 0);
 
@@ -452,10 +452,13 @@ function mountEntry() {
     if (!g('eName').value.trim() || !amtRaw) { toast('내용과 금액을 넣어주세요.'); return false; }
     const type = g('eType').value;
     const amount = type === 'income' ? Math.abs(amtRaw) : -Math.abs(amtRaw);
+    let categoryId = type === 'expense' ? g('eCat').value : null;
+    if (type === 'expense' && Math.abs(amtRaw) >= BIG_SPEND && M.majorOf(categoryId) === '변동비'
+      && confirm(ONCE_QUESTION)) categoryId = 'once_big';
     const { added, dup } = addTransactions([{
       date: g('eDate').value, time: g('eTime').value, merchant: g('eName').value.trim(),
       amount, type, owner: g('eOwner').value, accountId: g('eAcct').value,
-      categoryId: type === 'expense' ? g('eCat').value : null,
+      categoryId,
       memo: g('eMemo').value.trim(), source: 'manual',
     }]);
     if (!added.length && dup.length) { toast('같은 거래가 이미 있습니다.'); return false; }
@@ -572,6 +575,7 @@ function bindCardMapping(parsed, rec, out, onDone) {
     const sugg = state.data.linkSuggest ? suggestLinks(added) : [];
     if (flowNotes.length) touch();
     toast(`${added.length}건 추가했습니다.`);
+    askBigSpend(added);
     onDone?.(added.length);
     out.innerHTML = `<div class="card"><h2>완료</h2>
       <p>${added.length}건을 가계부에 넣었습니다.${dup.length ? ` (중복 ${dup.length}건은 건너뜀)` : ''}</p>
@@ -579,6 +583,49 @@ function bindCardMapping(parsed, rec, out, onDone) {
     </div>
     ${sugg.length ? renderLinkSuggestions(sugg) : ''}`;
     if (sugg.length) bindLinkSuggestions(sugg, out);
+  };
+}
+
+/* ---------- 100만원 넘는 지출 확인 ---------- */
+// 한 번에 100만원이 넘는 생활 소비는 가전·수리처럼 한 번뿐인 지출일 수 있다.
+// '일회성 큰 지출'로 바꾸면 월 소비·평균에서 빠지고 대시보드에 따로 보인다.
+const BIG_SPEND = 1000000;
+const ONCE_QUESTION = "100만원이 넘는 지출이에요.\n가전·수리·여행처럼 한 번만 있는 지출이면 '일회성 큰 지출'로 둘까요?\n\n일회성은 월 소비와 평균에서 빠지고 대시보드에 따로 보입니다.";
+const isBigSpend = (t) => t.type === 'expense' && !t.excluded && -t.amount >= BIG_SPEND
+  && M.majorOf(t.categoryId) === '변동비';
+
+/** 새로 넣은 거래 중 100만원 넘는 생활 소비를 일회성으로 바꿀지 창을 띄워 묻는다 */
+function askBigSpend(list) {
+  const big = list.filter(isBigSpend);
+  if (!big.length) return;
+  const box = document.createElement('div');
+  box.className = 'modal-backdrop';
+  box.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="bigTitle">
+    <h2 id="bigTitle">100만원 넘는 지출이 ${big.length}건 있어요</h2>
+    <p class="muted">가전·수리·여행처럼 한 번만 있는 지출이면 체크하세요. '일회성 큰 지출'로 바뀌어
+      월 소비와 평균에서 빠지고, 대시보드에 따로 보입니다.</p>
+    <div class="modal-list">${big.map((t, i) => `<label class="modal-row">
+      <input type="checkbox" data-big="${i}">
+      <span class="modal-main">${esc(t.merchant)}
+        <small>${t.date.slice(5).replace('-', '/')} · ${esc(M.categoryName(t.categoryId))}</small></span>
+      <b class="num">${M.won(-t.amount)}</b></label>`).join('')}</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" type="button" data-act="apply">체크한 것 일회성으로</button>
+      <button class="btn" type="button" data-act="skip">그대로 두기</button>
+    </div></div>`;
+  document.body.appendChild(box);
+  box.querySelector('[data-act="skip"]').onclick = () => box.remove();
+  box.querySelector('[data-act="apply"]').onclick = () => {
+    let n = 0;
+    box.querySelectorAll('[data-big]').forEach((cb) => {
+      if (!cb.checked) return;
+      const t = big[Number(cb.dataset.big)];
+      t.categoryId = 'once_big';
+      markEdited(t);
+      n += 1;
+    });
+    box.remove();
+    if (n) { touch(); toast(`${n}건을 일회성 큰 지출로 바꿨습니다.`); }
   };
 }
 
