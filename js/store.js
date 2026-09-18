@@ -59,7 +59,7 @@ export const DEFAULT_CATEGORIES = [
   "id": "car_charge",
   "name": "자동차-충전비",
   "major": "변동비",
-  "keywords": "충전|볼트업|채비|파워큐브|이지차저|차저|에버온|차지비|환경부"
+  "keywords": "충전|볼트업|채비|파워큐브|이지차저|차저|에버온|차지비|환경부|일렉링크|자동차환경협회"
  },
  {
   "id": "car_run",
@@ -77,7 +77,7 @@ export const DEFAULT_CATEGORIES = [
   "id": "shopping",
   "name": "생활용품·쇼핑",
   "major": "변동비",
-  "keywords": "쿠팡|네이버페이$|다이소|올리브영|이케아|무인양품|더현대|현대백화점|롯데몰|신세계|유원티앤지|뷰티원|다이아몬드|가우플랜|KIS|쌤소나이트|에이치앤앰|H&M|유니클로|자라|ZARA|마리오쇼핑|알리바바|ALIBABA|ALIEXPRESS|알리익스프레스|테무|TEMU|무신사|지그재그|에이블리|29CM|오늘의집|경동나비엔|앳홈|헤리티지|비앤앤|그린리본|에이폴|아울렛|백화점|면세"
+  "keywords": "쿠팡|11번가|네이버페이$|다이소|올리브영|이케아|무인양품|더현대|현대백화점|롯데몰|신세계|유원티앤지|뷰티원|다이아몬드|가우플랜|KIS|쌤소나이트|에이치앤앰|H&M|유니클로|자라|ZARA|마리오쇼핑|알리바바|ALIBABA|ALIEXPRESS|알리익스프레스|테무|TEMU|무신사|지그재그|에이블리|29CM|오늘의집|경동나비엔|앳홈|헤리티지|비앤앤|그린리본|에이폴|아울렛|백화점|면세"
  },
  {
   "id": "medical",
@@ -248,7 +248,16 @@ function normalize(d) {
   d.budgets ||= {};
   d.monthly ||= {};
   d.otherAssets ||= [];
-  d.transactions.forEach((t) => { t.type ||= 'expense'; });
+  // 예전 자료에서 같은 날 같은 거래 여러 건(예: 연금저축 10만원 ×4)이 같은 id를 받은 경우가 있다.
+  // 기기마다 같은 결과가 나오도록 두 번째부터 순서대로 _2, _3을 붙인다.
+  const ids = new Set();
+  d.transactions.forEach((t) => {
+    t.type ||= 'expense';
+    let id = t.id;
+    for (let n = 2; ids.has(id); n++) id = `${t.id}_${n}`;
+    t.id = id;
+    ids.add(id);
+  });
 }
 
 export function today() { return new Date().toISOString().slice(0, 10); }
@@ -261,9 +270,10 @@ export function latestMonth() {
 /* ---------- 저장 ---------- */
 let autoSaveTimer = null;
 
-export function touch() {
+/** 고친 내용을 저장한다. stamp를 주면 저장 시각을 그 값으로 둔다 (합치기만 한 경우) */
+export function touch({ stamp } = {}) {
   state.dirty = true;
-  state.data.updatedAt = new Date().toISOString().slice(0, 19);
+  state.data.updatedAt = stamp || new Date().toISOString().slice(0, 19);
   try { localStorage.setItem(LS_KEY, JSON.stringify(state.data)); } catch { /* 용량 초과 */ }
   emit();
   // 공유 폴더 파일이 연결돼 있으면 잠시 뒤 자동으로 저장한다
@@ -345,11 +355,41 @@ export async function exportFile() {
 export async function importFile(file, { mode = 'merge' } = {}) {
   const text = await file.text();
   const incoming = JSON.parse(text);
-  return applyIncoming(incoming, { mode });
+  // 사용자가 직접 고른 파일은 그 파일의 설정·분류를 따른다 (드라이브 자동 동기화는 시각으로 판단)
+  return applyIncoming(incoming, { mode, preferIncoming: true });
+}
+
+/** 거래 하나를 고쳤다고 표시한다. 합칠 때 거래마다 더 최근에 고친 쪽을 따른다 */
+export function markEdited(t) {
+  t.mt = new Date().toISOString().slice(0, 19);
+}
+
+/** 설정 목록(카테고리·계좌)을 id로 합친다. 한쪽에만 있는 것은 살리고, 같은 것은 더 최근 파일 것을 쓰되
+ *  카테고리 키워드와 계좌의 카드번호는 양쪽 것을 모두 남긴다 (한 기기에서 더한 것이 사라지지 않게) */
+function mergeList(mineList = [], theirList = [], newer, field) {
+  const out = mineList.map((x) => ({ ...x }));
+  const byId = new Map(out.map((x) => [x.id, x]));
+  theirList.forEach((x) => {
+    const cur = byId.get(x.id);
+    if (!cur) { out.push({ ...x }); return; }
+    let both;
+    if (field === 'keywords') {
+      const a = cur.keywords || '';
+      const b = x.keywords || '';
+      // 괄호가 있는 정규식은 '|'로 나누면 깨지므로 합치지 않는다
+      both = /[()]/.test(a + b) ? (newer ? b : a)
+        : [...new Set([...a.split('|'), ...b.split('|')].filter(Boolean))].join('|');
+    } else {
+      both = [...new Set([...(cur.match || []), ...(x.match || [])])];
+    }
+    if (newer) Object.assign(cur, x);
+    cur[field] = both;
+  });
+  return out;
 }
 
 /** 다른 기기/드라이브에서 온 데이터를 지금 데이터와 합친다 */
-export function applyIncoming(incoming, { mode = 'merge' } = {}) {
+export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false } = {}) {
   if (!incoming || !incoming.transactions) throw new Error('가계부 데이터가 아닙니다.');
 
   if (mode === 'replace' || !state.data?.transactions?.length) {
@@ -361,37 +401,57 @@ export function applyIncoming(incoming, { mode = 'merge' } = {}) {
 
   // 합치기: 양쪽에만 있는 거래를 모두 살린다
   const mine = state.data;
-  const newer = (incoming.updatedAt || '') > (mine.updatedAt || '');
-  const byId = new Map(mine.transactions.map((t) => [t.id, t]));
-  const byKey = new Map(mine.transactions.map((t) => [dedupKey(t), t]));
+  normalize(incoming);                 // 겹친 id를 이 기기와 같은 규칙으로 정리
+  const newer = preferIncoming || (incoming.updatedAt || '') > (mine.updatedAt || '');
   let added = 0;
   let updated = 0;
-  incoming.transactions.forEach((t) => {
-    const same = byId.get(t.id) || byKey.get(dedupKey(t));
-    if (!same) {
-      mine.transactions.push(t);
-      byId.set(t.id, t);
-      byKey.set(dedupKey(t), t);
-      added += 1;
-      return;
-    }
-    // 같은 거래라면 더 최근에 저장된 쪽의 분류·메모를 따른다
-    if (newer && (same.categoryId !== t.categoryId || same.type !== t.type
-      || same.excluded !== t.excluded || same.memo !== t.memo)) {
+  const used = new Set();
+  const take = (same, t) => {
+    used.add(same);
+    // 같은 거래라면 더 최근에 고친 쪽의 분류·메모를 따른다. 고친 시각이 양쪽 다 없으면 더 최근 파일 쪽.
+    const theirs = t.mt || '';
+    const ours = same.mt || '';
+    const useTheirs = (theirs || ours) ? theirs > ours : newer;
+    if (!useTheirs) return;
+    if (same.categoryId !== t.categoryId || same.type !== t.type
+      || !!same.excluded !== !!t.excluded || (same.memo || '') !== (t.memo || '')) {
       Object.assign(same, { categoryId: t.categoryId, type: t.type, excluded: t.excluded, memo: t.memo });
+      if (t.mt) same.mt = t.mt;
       updated += 1;
     }
+  };
+  const byId = new Map(mine.transactions.map((t) => [t.id, t]));
+  const noId = [];
+  incoming.transactions.forEach((t) => {
+    const same = byId.get(t.id);
+    if (!same) noId.push(t);
+    else if (!used.has(same)) take(same, t);
+  });
+  // id가 다르면 날짜·계정·가맹점·금액으로 짝짓는다. 같은 날 같은 거래가 여러 건일 수 있어(놀이기구 표 3장 등) 건수까지 맞춘다.
+  const pool = new Map();
+  mine.transactions.forEach((t) => {
+    if (used.has(t)) return;
+    const k = dedupKey(t);
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(t);
+  });
+  noId.forEach((t) => {
+    const same = pool.get(dedupKey(t))?.shift();
+    if (same) { take(same, t); return; }
+    mine.transactions.push(t);
+    added += 1;
   });
   mine.transactions.sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
 
-  // 피드백도 합친다
-  const fbIds = new Set((mine.feedback || []).map((f) => f.id));
+  // 피드백도 합친다. '반영됨'은 한쪽이라도 표시했으면 반영된 것으로 본다.
+  const fbById = new Map((mine.feedback || []).map((f) => [f.id, f]));
   (incoming.feedback || []).forEach((f) => {
-    if (!fbIds.has(f.id)) { mine.feedback.unshift(f); fbIds.add(f.id); }
+    const cur = fbById.get(f.id);
+    if (!cur) { mine.feedback.unshift(f); fbById.set(f.id, f); return; }
+    if (f.status === 'done' && cur.status !== 'done') Object.assign(cur, { status: 'done', note: f.note || cur.note });
   });
   mine.feedback.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-  // 설정(계좌·카테고리·대출·투자·사용자)은 더 최근에 저장된 파일 것을 쓴다
   // 월말 정리 기록은 달·항목별로 합친다 (한쪽이라도 끝냈으면 끝낸 것으로)
   if (incoming.monthly) {
     mine.monthly ||= {};
@@ -404,14 +464,20 @@ export function applyIncoming(incoming, { mode = 'merge' } = {}) {
     });
   }
 
+  // 카테고리·계좌는 id로 합친다 (새로 생긴 것, 더한 키워드·카드번호는 어느 쪽이든 살린다)
+  mine.categories = mergeList(mine.categories, incoming.categories, newer, 'keywords');
+  mine.accounts = mergeList(mine.accounts, incoming.accounts, newer, 'match');
+  // 나머지 설정(사용자·대출·자산·투자)은 더 최근에 저장된 파일 것을 쓴다
   if (newer) {
-    ['users', 'accounts', 'categories', 'loans', 'otherAssets', 'budgets', 'checklist'].forEach((k) => {
+    ['users', 'loans', 'otherAssets', 'budgets', 'checklist'].forEach((k) => {
       if (incoming[k]) mine[k] = incoming[k];
     });
     if (incoming.investment) mine.investment = incoming.investment;
   }
   normalize(mine);
-  touch();
+  // 합치기만 한 것은 '고친 것'이 아니다. 저장 시각을 지금으로 올리면 이 기기가 늘 더 최신으로 보여
+  // 다른 기기에서 고친 설정이 무시되므로, 두 쪽 중 늦은 시각을 쓴다.
+  touch({ stamp: [mine.updatedAt || '', incoming.updatedAt || ''].sort().pop() });
   return { mode: 'merge', total: mine.transactions.length, added, updated, newer };
 }
 
@@ -424,14 +490,17 @@ export function existingKeys() {
   return new Set(state.data.transactions.map(dedupKey));
 }
 
-export function addTransactions(list) {
-  const seen = existingKeys();
+/** checked: reconcile로 이미 건수까지 중복을 가려낸 목록 — 같은 날 같은 거래가 여러 건이어도 모두 넣는다 */
+export function addTransactions(list, { checked = false } = {}) {
+  const seen = checked ? null : existingKeys();
   const added = [];
   const dup = [];
   list.forEach((t) => {
-    const k = dedupKey(t);
-    if (seen.has(k)) { dup.push(t); return; }
-    seen.add(k);
+    if (seen) {
+      const k = dedupKey(t);
+      if (seen.has(k)) { dup.push(t); return; }
+      seen.add(k);
+    }
     t.id ||= `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
     added.push(t);
   });

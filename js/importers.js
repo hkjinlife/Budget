@@ -1,7 +1,7 @@
 // 카드사·은행에서 받은 파일을 읽어 거래로 바꾼다.
 // 지원: 현대카드(.xls=HTML), 신한카드(.xlsx), 그 외 엑셀/CSV는 열을 추정해서 가져온다.
 import { guessCategory } from './model.js';
-import { state, dedupKey } from './store.js';
+import { state, dedupKey, markEdited } from './store.js';
 
 const num = (v) => {
   if (typeof v === 'number') return v;
@@ -33,51 +33,111 @@ export function matchAccount(cardRaw) {
   })) || null;
 }
 
-/** 현대카드: 확장자는 .xls지만 실제로는 HTML 표 */
+/** 확장자는 .xls지만 실제로는 HTML 표인 파일을 행(글자 배열)들로 바꾼다.
+ *  template 안에 넣으면 파일 속 이미지·스크립트가 실행되지 않는다 */
+function htmlRows(text) {
+  const clean = text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '');
+  const tpl = document.createElement('template');
+  return (clean.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || []).map((tr) =>
+    (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) || []).map((c) => {
+      tpl.innerHTML = c.replace(/<t[dh][^>]*>|<\/t[dh]>/gi, '');
+      return tpl.content.textContent.replace(/\s+/g, ' ').trim();
+    }));
+}
+
+const dayGap = (a, b) => Math.abs(new Date(a) - new Date(b)) / 86400000;
+
+/** 현대카드 실시간 이용내역 (.xls = HTML 표) */
 function parseHyundai(text) {
-  const clean = text.replace(/<script[\s\S]*?<\/script>/gi, '');
   const rows = [];
   const skipped = [];
-  const trs = clean.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
-  trs.forEach((tr) => {
-    const cells = (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) || []).map((c) => {
-      const el = document.createElement('div');
-      el.innerHTML = c.replace(/<t[dh][^>]*>|<\/t[dh]>/gi, '');
-      return el.textContent.replace(/\s+/g, ' ').trim();
-    });
-    if (cells.length < 11) return;
+  const lines = htmlRows(text).filter((c) => c.length >= 11 && isoDate(c[0]));
+  const paired = new Set();
+  lines.forEach((cells, i) => {
     const date = isoDate(cells[0]);
-    if (!date) return;
     const status = cells[10];
     const amount = num(cells[5]);
     if (status === '취소') { skipped.push({ date, merchant: cells[4], amount, reason: '승인 취소' }); return; }
     const cardRaw = `${cells[2]} ${cells[3]}`.trim();      // 예: "가족 1***-******-5678*"
     const acct = matchAccount(cells[3]);
-    rows.push({
-      date, time: cells[1] || '', merchant: cells[4],
-      amount: (status === '취소전표접수' ? 1 : -1) * amount,
-      cardRaw,
-      accountId: acct ? acct.id : '',
-      owner: acct ? acct.owner : '',
-      type: 'expense', memo: status === '취소전표접수' ? '환불' : '',
-      source: 'import:현대카드',
-    });
+    const row = {
+      date, time: cells[1] || '', merchant: cells[4], amount: -amount, cardRaw,
+      accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
+      type: 'expense', memo: '', source: 'import:현대카드',
+    };
+    if (status === '취소전표접수') {
+      // 국내결제는 원래 결제 줄이 '취소전표접수'로 바뀌고(= 결제 자체가 취소), 해외결제는 취소가 따로 한 줄(환불)로 온다.
+      // 해외 가맹점은 영문이라, 영문 가맹점이고 같은 카드·7일 안·금액 3% 안(환율 차이)의 영문 결제 줄이 있으면 환불로 본다.
+      const hangul = /[가-힣]/;
+      const orig = hangul.test(cells[4]) ? -1 : lines.findIndex((o, j) => j !== i && !paired.has(j)
+        && o[3] === cells[3] && !/취소/.test(o[10]) && !hangul.test(o[4])
+        && Math.abs(num(o[5]) - amount) <= amount * 0.03 && dayGap(isoDate(o[0]), date) <= 7);
+      if (orig < 0) { skipped.push({ date, merchant: cells[4], amount, reason: '결제 후 취소' }); return; }
+      paired.add(orig);
+      Object.assign(row, { amount, memo: '환불' });
+    }
+    rows.push(row);
   });
   return { rows, skipped, kind: '현대카드' };
 }
 
+/** 신한카드 '이용대금명세서'(.xls = HTML): 카드사용내역, 할인혜택, 연회비(요약에만 있음) */
+function parseShinhanStatement(text) {
+  if (!/이용대금명세서/.test(text) || !/마이신한/.test(text) || !/이용카드/.test(text)) return null;
+  const DOT = /^20\d\d\.\d\d\.\d\d$/;
+  const rows = [];
+  const discounts = new Map();
+  const pending = [];   // 할인 줄 — 할인 내역 표가 사용내역 표보다 뒤에 있어서 메모는 다 읽은 뒤에 채운다
+  let sec = '';
+  let payDate = '';
+  let fee = 0;
+  htmlRows(text).forEach((c) => {
+    if (c.length === 1 && /^\d\./.test(c[0])) sec = c[0];              // "3. 카드사용내역" 같은 제목
+    if (!payDate && c.length >= 2 && DOT.test(c[1])) payDate = isoDate(c[1]);   // 맨 위 목록의 결제일
+    if (c.length === 3 && c[0] === '이번달' && c[1] === '연회비') fee = num(c[2]);
+    if (!DOT.test(c[0] || '')) return;
+    const date = isoDate(c[0]);
+    if (sec.startsWith('6')) {        // 할인혜택: 이용일, 가맹점, 적용구분, 이용금액, 원금할인, 할인금액, 수수료할인, 내역
+      discounts.set(`${date}|${c[1]}|${num(c[3])}`, c[7] || '카드 할인');
+      return;
+    }
+    if (!sec.startsWith('3') || c.length < 8) return;
+    // 이용일, 이용카드, 가맹점, 이용금액, 할부기간, 회차, 이번달 납부금액, ...
+    const [, cardRaw, merchant, usedText, months, turn, paidText] = c;
+    if (months && turn && !/^0?1$/.test(turn)) return;     // 할부 2회차부터는 첫 달에 이미 넣었다
+    const acct = matchAccount(cardRaw);
+    const base = {
+      date, time: '', cardRaw, accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
+      type: 'expense', source: 'import:신한카드명세서',
+    };
+    const used = num(usedText);
+    rows.push({ ...base, merchant, amount: -used, memo: cardRaw });
+    // 할인은 따로 한 줄(+)로 넣는다. 실시간 내역·다른 달 명세서와 같은 거래로 맞춰지게 결제 줄은 이용금액 그대로 둔다.
+    const paid = num(paidText);
+    if (!months && paid > 0 && paid < used) {
+      const row = { ...base, merchant: `${merchant} (카드 할인)`, amount: used - paid,
+        categoryId: guessCategory(merchant), memo: '카드 할인' };
+      rows.push(row);
+      pending.push([row, `${date}|${merchant}|${used}`]);
+    }
+  });
+  pending.forEach(([row, key]) => { row.memo = discounts.get(key) || row.memo; });
+  if (fee && payDate) {
+    const acct = rows[0] ? state.data.accounts.find((a) => a.id === rows[0].accountId) : null;
+    rows.push({
+      date: payDate, time: '', merchant: '신한카드 연회비', amount: -fee, cardRaw: rows[0]?.cardRaw || '',
+      accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
+      type: 'expense', categoryId: 'dues', memo: '명세서 결제일 기준', source: 'import:신한카드명세서',
+    });
+  }
+  return rows.length ? { rows, skipped: [], kind: '신한카드 명세서' } : null;
+}
+
 /** 현대카드 '이용대금명세서': 가맹점과 금액이 한 칸에 붙어 있고, 카드가 상품명으로 적힌다 */
 function parseHyundaiStatement(text) {
-  const clean = text.replace(/<script[\s\S]*?<\/script>/gi, '');
-  if (!/이용대금명세서/.test(clean)) return null;
+  if (!/이용대금명세서/.test(text) || !/결제원금/.test(text)) return null;
   const rows = [];
-  const trs = clean.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
-  trs.forEach((tr) => {
-    const cells = (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) || []).map((c) => {
-      const el = document.createElement('div');
-      el.innerHTML = c.replace(/<t[dh][^>]*>|<\/t[dh]>/gi, '');
-      return el.textContent.replace(/\s+/g, ' ').trim();
-    });
+  htmlRows(text).forEach((cells) => {
     if (cells.length < 9) return;
     const date = isoDate(cells[0]);
     if (!date) return;
@@ -127,6 +187,38 @@ function parseShinhanCard(aoa) {
     });
   });
   return { rows, skipped, kind: '신한카드' };
+}
+
+/** 삼성카드 이용내역(.xlsx): 일시불·연회비가 시트마다 나뉘어 있다. 법인카드 사용분은 넣지 않는다 */
+function parseSamsungCard(sheets) {
+  const rows = [];
+  const skipped = [];
+  let found = false;
+  sheets.forEach((aoa) => {
+    const head = aoa.findIndex((r) => r.some((c) => String(c).trim() === '이용구분')
+      && r.some((c) => String(c).trim() === '가맹점'));
+    if (head < 0) return;
+    found = true;
+    const cols = aoa[head].map((c) => String(c || '').trim());
+    const iDate = cols.indexOf('이용일'), iCard = cols.indexOf('이용구분');
+    const iName = cols.indexOf('가맹점'), iAmt = cols.indexOf('이용금액');
+    aoa.slice(head + 1).forEach((r) => {
+      const date = isoDate(r[iDate]);
+      const amount = num(r[iAmt]);
+      if (!date || !amount) return;
+      const cardRaw = String(r[iCard] || '').replace(/\s+/g, '');     // "본 인 658" → "본인658"
+      const merchant = String(r[iName] || '').replace(/\s+/g, ' ').trim();
+      if (/^법인/.test(cardRaw)) { skipped.push({ date, merchant, amount, reason: '법인카드' }); return; }
+      const acct = matchAccount(cardRaw);
+      rows.push({
+        date, time: '', merchant, amount: -amount, cardRaw,
+        accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
+        type: 'expense', categoryId: /연회비/.test(merchant) ? 'dues' : undefined,
+        memo: cardRaw, source: 'import:삼성카드',
+      });
+    });
+  });
+  return found ? { rows, skipped, kind: '삼성카드' } : null;
 }
 
 /** 표 위쪽(제목 영역)에 적힌 계좌번호를 찾는다. 예: "계좌번호 123-456-789012" */
@@ -348,11 +440,11 @@ async function parsePdf(file) {
   };
 }
 
-function sheetToAoa(input, isText = false) {
+/** 시트마다 표(행 배열)를 돌려준다 */
+function sheetsToAoa(input, isText = false) {
   // CSV는 글자로 읽어야 한글이 깨지지 않는다
   const wb = XLSX.read(input, { type: isText ? 'string' : 'array', cellDates: true, raw: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  return wb.SheetNames.map((n) => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
 }
 
 export async function parseFile(file) {
@@ -361,7 +453,9 @@ export async function parseFile(file) {
   if (name.endsWith('.pdf')) result = await parsePdf(file);
   if (name.endsWith('.xls')) {
     const text = await file.text();
-    if (/<table|<tr/i.test(text)) result = parseHyundaiStatement(text) || parseHyundai(text);
+    if (/<table|<tr/i.test(text)) {
+      result = parseShinhanStatement(text) || parseHyundaiStatement(text) || parseHyundai(text);
+    }
   }
   if (!result && /\.(xlsx|xls|csv|txt)$/.test(name)) {
     if (typeof XLSX === 'undefined') throw new Error('엑셀 읽기 도구를 불러오지 못했습니다. 인터넷 연결을 확인하세요.');
@@ -369,8 +463,8 @@ export async function parseFile(file) {
     const input = isText
       ? (await file.text()).replace(/^\uFEFF/, '')
       : new Uint8Array(await file.arrayBuffer());
-    const aoa = sheetToAoa(input, isText);
-    result = parseShinhanCard(aoa) || parseGeneric(aoa, file.name);
+    const sheets = sheetsToAoa(input, isText);
+    result = parseSamsungCard(sheets) || parseShinhanCard(sheets[0]) || parseGeneric(sheets[0], file.name);
   }
   if (!result) throw new Error('읽을 수 있는 표를 찾지 못했습니다. 카드사·은행의 엑셀(.xls, .xlsx), CSV, PDF 내역을 넣어주세요.');
   result.rows.forEach((r) => {
@@ -394,14 +488,43 @@ export async function parseFile(file) {
 /** 파일 내용과 앱에 이미 있는 내역을 대조한다 */
 export function reconcile(parsed) {
   const existing = state.data.transactions;
-  const byKey = new Map(existing.map((t) => [dedupKey(t), t]));
   const dates = parsed.rows.map((r) => r.date).sort();
   const range = { from: dates[0], to: dates[dates.length - 1] };
 
-  const fresh = [];
+  // 같은 날·같은 곳·같은 금액이 여러 번일 수 있어(놀이기구 표 3장 등) 건수까지 맞춘다
+  const pool = new Map();
+  existing.forEach((t) => {
+    const k = dedupKey(t);
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(t);
+  });
+  const matched = new Set();
+  const exact = [];
   const dup = [];
   parsed.rows.forEach((r) => {
-    (byKey.has(dedupKey(r)) ? dup : fresh).push(r);
+    const same = pool.get(dedupKey(r));
+    if (same?.length) { matched.add(same.pop()); dup.push(r); } else exact.push(r);
+  });
+
+  // 형식이 다른 파일로 이미 넣은 같은 거래 (예: 실시간 이용내역 ↔ 명세서). 가게 이름 표기가 달라서
+  // 같은 카드·같은 금액·날짜 3일 안(환불은 7일, 해외결제는 환율 때문에 금액 3% 안)이면 같은 거래로 본다.
+  const FX = /,(USD|KRW|EUR|JPY|GBP|CNY):/;
+  const others = existing.filter((t) => !matched.has(t) && t.accountId && /^import:/.test(t.source || ''));
+  const fresh = [];
+  let similar = 0;
+  exact.forEach((r) => {
+    let best = null;
+    if (r.accountId) {
+      others.forEach((t) => {
+        if (matched.has(t) || t.accountId !== r.accountId || t.source === r.source) return;
+        if ((t.amount > 0) !== (r.amount > 0)) return;
+        const gap = dayGap(t.date, r.date);
+        if (gap > (r.amount > 0 ? 7 : 3) || (best && best.gap <= gap)) return;
+        const fx = FX.test(r.merchant || '') || FX.test(t.merchant || '');
+        if (t.amount === r.amount || (fx && Math.abs(t.amount - r.amount) <= Math.abs(r.amount) * 0.03)) best = { t, gap };
+      });
+    }
+    if (best) { matched.add(best.t); dup.push(r); similar += 1; } else fresh.push(r);
   });
 
   // 같은 날·같은 가맹점인데 금액이 다른 건 (오타나 부분 취소일 수 있음).
@@ -431,17 +554,16 @@ export function reconcile(parsed) {
   });
 
   // 파일 기간 안에 앱에만 있는 거래 (파일에서 빠졌거나, 직접 입력한 건)
-  const fileKeys = new Set(parsed.rows.map(dedupKey));
   const accounts = new Set(parsed.rows.map((r) => r.accountId).filter(Boolean));
   const onlyInApp = existing.filter((t) => t.type === 'expense'
     && t.date >= range.from && t.date <= range.to
     && (accounts.size ? accounts.has(t.accountId) : true)
-    && !fileKeys.has(dedupKey(t)));
+    && !matched.has(t));
 
-  const note = parsed.kind === '현대카드 명세서'
-    ? '명세서는 매입일 기준이라 실시간 이용내역과 날짜가 하루 이틀 어긋날 수 있습니다. 이미 넣은 기간과 겹치면 같은 거래가 두 번 들어갈 수 있으니, 겹치지 않는 기간만 넣으세요.'
+  const note = similar
+    ? `다른 형식의 파일(예: 실시간 이용내역)로 이미 넣은 거래 ${similar}건은 같은 카드·같은 금액·3일 안이라 같은 거래로 보고 건너뜁니다.`
     : '';
-  return { fresh, dup, mismatched, onlyInApp, range, note, skipped: parsed.skipped || [] };
+  return { fresh, dup, similar, mismatched, onlyInApp, range, note, skipped: parsed.skipped || [] };
 }
 
 
@@ -549,7 +671,7 @@ export function commitLinks(choices) {
     a.updatedAt = new Date().toISOString().slice(0, 10);
     state.data.linked[linkKey(t)] = assetName;
     const tx = state.data.transactions.find((x) => linkKey(x) === linkKey(t));
-    if (tx) { tx.type = 'investment'; tx.memo = `${assetName} 납입`; }
+    if (tx) { tx.type = 'investment'; tx.memo = `${assetName} 납입`; markEdited(tx); }
     sums.set(assetName, (sums.get(assetName) || 0) + amt);
     if (remember) {
       // 적요가 가족 이름뿐이면 다른 이체와 헷갈리니 금액까지 같이 기억한다

@@ -1,5 +1,5 @@
 // 화면 렌더링. 각 함수는 HTML 문자열을 만들고, mount()에서 이벤트를 붙인다.
-import { state, touch, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
+import { state, touch, markEdited, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
 import * as M from './model.js';
 import { monthlyChart, categoryChart, investChart, loanChart } from './charts.js';
 import { parseFile, reconcile, applyInvestFlows, suggestLinks, commitLinks, autoLinks, DEFAULT_AUTOLINKS } from './importers.js';
@@ -313,13 +313,13 @@ function mountTransactions() {
     document.querySelectorAll('#txTable tbody tr').forEach((tr) => {
       const t = state.data.transactions.find((x) => x.id === tr.dataset.id);
       if (!t) return;
-      tr.querySelector('[data-act="cat"]').onchange = (e) => { t.categoryId = e.target.value; touch(); };
+      tr.querySelector('[data-act="cat"]').onchange = (e) => { t.categoryId = e.target.value; markEdited(t); touch(); };
       tr.querySelector('[data-act="type"]').onchange = (e) => {
         t.type = e.target.value;
         if (t.type !== 'expense') t.categoryId = null; else t.categoryId ||= M.guessCategory(t.merchant);
-        touch(); draw();
+        markEdited(t); touch(); draw();
       };
-      tr.querySelector('[data-act="excl"]').onchange = (e) => { t.excluded = e.target.checked; touch(); draw(); };
+      tr.querySelector('[data-act="excl"]').onchange = (e) => { t.excluded = e.target.checked; markEdited(t); touch(); draw(); };
       tr.querySelector('[data-act="del"]').onclick = () => {
         if (confirm(`${t.date} ${t.merchant} ${M.won(-t.amount)} 삭제할까요?`)) { removeTransaction(t.id); draw(); }
       };
@@ -511,9 +511,8 @@ function guessOwner(parsed, card) {
 
 /** 파일 이름·카드 표기에서 새 계정 이름을 추측한다 */
 function guessAccountName(parsed, card) {
-  const brand = parsed.kind === '현대카드' ? '현대카드'
-    : parsed.kind === '신한카드' ? '신한카드'
-      : (parsed.fileName.match(/신한|국민|우리|하나|농협|기업|카카오|토스|전북|삼성|현대|롯데|비씨/) || ['새 계좌'])[0];
+  const brand = (parsed.kind.match(/현대카드|신한카드|삼성카드/)
+    || parsed.fileName.match(/신한|국민|우리|하나|농협|기업|카카오|토스|전북|삼성|현대|롯데|비씨/) || ['새 계좌'])[0];
   // 파일 이름에 사용자 이름이 있으면 같이 붙인다 (예: 신한은행_아내.xlsx)
   const person = state.data.users.find((u) => parsed.fileName.includes(u.name));
   const tail = (card.cardRaw.match(/(\d{3,4})\*?\s*$/) || [])[1] || '';
@@ -559,12 +558,14 @@ function bindCardMapping(parsed, rec, out, onDone) {
     });
     if (failed) { toast('새로 등록할 카드 이름을 넣어주세요.'); return; }
 
-    // 2) 거래에 반영하고 중복을 다시 확인한 뒤 넣는다
-    rec.fresh.forEach((r) => {
+    // 2) 고른 카드·사용자를 반영한 뒤 중복을 다시 확인하고 넣는다 (카드를 바꾸면 중복 여부도 달라진다)
+    parsed.rows.forEach((r) => {
       const m = mapping.get(r.cardRaw || '');
       if (m) { r.accountId = m.accountId; r.owner = m.owner; }
     });
-    const { added, dup } = addTransactions(rec.fresh);
+    const again = reconcile(parsed);
+    const { added } = addTransactions(again.fresh, { checked: true });
+    const { dup } = again;
     // 기본(수기 모드)에서는 업로드가 자산·원금을 건드리지 않는다. 잔액·원금은 월말 정리에서 입력.
     const flowNotes = state.data.linkSuggest ? applyInvestFlows(added) : [];
     // 저축·투자로 보이는 출금을 자산에 연결할지 묻는 화면 (설정에서 켠 경우만. 기본은 월말에 잔액을 직접 입력)
@@ -689,7 +690,7 @@ function renderReconcile(parsed, rec) {
     ${tbl(rec.onlyInApp.slice(0, 40).map((t) => `<tr><td>${t.date.slice(5)}</td><td>${esc(t.merchant)}</td>
       <td class="num">${M.won(-t.amount)}</td><td>${esc(t.source || '')}</td></tr>`).join(''), ['날짜', '내용', '금액', '출처'])}</div>` : ''}
 
-  ${rec.skipped.length ? `<div class="card"><h2>취소 건 (넣지 않음)</h2>
+  ${rec.skipped.length ? `<div class="card"><h2>넣지 않은 것 (취소·법인카드)</h2>
     ${tbl(rec.skipped.slice(0, 20).map((s) => `<tr><td>${s.date.slice(5)}</td><td>${esc(s.merchant)}</td>
       <td class="num">${M.won(s.amount)}</td><td>${esc(s.reason)}</td></tr>`).join(''), ['날짜', '내용', '금액', '사유'])}</div>` : ''}
 
