@@ -19,7 +19,7 @@ const isoDate = (v) => {
 };
 const timeOf = (v) => (String(v ?? '').match(/(\d{1,2}:\d{2})(:\d{2})?/) || [])[0] || '';
 
-/** 파일에 적힌 카드번호·계좌번호(예: "본인299*", "3***-******-8260*")로 등록된 계정을 찾는다 */
+/** 파일에 적힌 카드번호·계좌번호(예: "본인1234*", "1***-******-5678*")로 등록된 계정을 찾는다 */
 export function matchAccount(cardRaw) {
   if (!cardRaw) return null;
   const digits = String(cardRaw).replace(/\D/g, '');
@@ -47,7 +47,7 @@ function parseHyundai(text) {
     const status = cells[10];
     const amount = num(cells[5]);
     if (status === '취소') { skipped.push({ date, merchant: cells[4], amount, reason: '승인 취소' }); return; }
-    const cardRaw = `${cells[2]} ${cells[3]}`.trim();      // 예: "가족 3***-******-0940*"
+    const cardRaw = `${cells[2]} ${cells[3]}`.trim();      // 예: "가족 1***-******-5678*"
     const acct = matchAccount(cells[3]);
     rows.push({
       date, time: cells[1] || '', merchant: cells[4],
@@ -94,7 +94,7 @@ function parseShinhanCard(aoa) {
   return { rows, skipped, kind: '신한카드' };
 }
 
-/** 표 위쪽(제목 영역)에 적힌 계좌번호를 찾는다. 예: "계좌번호 110-411-673189" */
+/** 표 위쪽(제목 영역)에 적힌 계좌번호를 찾는다. 예: "계좌번호 123-456-789012" */
 function headerAccount(aoa, headRow) {
   const text = aoa.slice(0, Math.max(headRow, 0)).flat().map((c) => String(c || '')).join(' ');
   const m = text.match(/\d{2,4}-\d{2,6}-\d{3,7}/) || text.match(/계좌번호[^\d]{0,6}([\d-]{8,})/);

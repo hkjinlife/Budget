@@ -33,21 +33,6 @@ export function welcome() {
     </div>
   </div>
   <div class="card">
-    <h2>새로 시작하기</h2>
-    <p class="muted">카드·은행 파일을 처음부터 다시 올리고 싶을 때 씁니다. 지우기 전에 <b>파일 내보내기</b>로 백업해두세요.</p>
-    ${editable() ? `<div class="btn-row" style="margin-top:10px">
-      <button class="btn" id="resetTx">거래내역만 지우기</button>
-      <button class="btn" id="resetAll">전부 지우기</button>
-      <button class="btn" id="forgetDev">이 기기의 사본 지우기</button>
-    </div>
-    <ul class="tight" style="margin-top:10px">
-      <li><b>거래내역만 지우기</b> — 계좌·카테고리·대출·투자 설정은 그대로 두고 거래만 비웁니다</li>
-      <li><b>전부 지우기</b> — 빈 가계부로 되돌립니다 (카테고리 기준표는 유지)</li>
-      <li><b>이 기기의 사본 지우기</b> — 공유 폴더 파일은 그대로 두고, 이 브라우저에 남은 데이터만 지웁니다</li>
-    </ul>` : lockNote('데이터 지우기')}
-  </div>
-
-  <div class="card">
     <h2>아이폰에서 앱처럼 쓰기</h2>
     <ol class="tight">
       <li>사파리에서 이 주소를 엽니다.</li>
@@ -349,7 +334,7 @@ function guessAccountName(parsed, card) {
   const brand = parsed.kind === '현대카드' ? '현대카드'
     : parsed.kind === '신한카드' ? '신한카드'
       : (parsed.fileName.match(/신한|국민|우리|하나|농협|기업|카카오|토스|전북|삼성|현대|롯데|비씨/) || ['새 계좌'])[0];
-  // 파일 이름에 사람 이름이 있으면 같이 붙인다 (예: 신한은행_박혜민.xlsx)
+  // 파일 이름에 사용자 이름이 있으면 같이 붙인다 (예: 신한은행_아내.xlsx)
   const person = state.data.users.find((u) => parsed.fileName.includes(u.name));
   const tail = (card.cardRaw.match(/(\d{3,4})\*?\s*$/) || [])[1] || '';
   return `${brand}${person ? `(${person.name})` : ''}${tail ? ` ${tail}` : ''}`.trim();
@@ -438,7 +423,7 @@ function renderReconcile(parsed, rec) {
             ${state.data.accounts.map((a) => `<option value="${a.id}" ${a.id === c.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
             <option value="__new__" ${c.accountId ? '' : 'selected'}>+ 새 카드·계좌로 등록</option>
           </select>
-          <input data-role="newname" placeholder="예: 신한카드(박혜민)" style="display:${c.accountId ? 'none' : 'block'};margin-top:6px"
+          <input data-role="newname" placeholder="예: 신한카드(아내)" style="display:${c.accountId ? 'none' : 'block'};margin-top:6px"
             value="${esc(c.accountId ? '' : guessAccountName(parsed, c))}"></td>
           <td><select data-role="owner">
             ${state.data.users.map((u) => `<option value="${u.id}" ${u.id === guessOwner(parsed, c) ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
@@ -982,7 +967,7 @@ export function settings() {
           <td><input data-f="name" value="${esc(a.name)}" style="min-width:150px"></td>
           <td><select data-f="type">${['card', 'bank', 'cash'].map((k) => `<option value="${k}" ${k === a.type ? 'selected' : ''}>${k === 'card' ? '카드' : k === 'bank' ? '통장' : '현금'}</option>`).join('')}</select></td>
           <td><select data-f="owner">${d.users.map((u) => `<option value="${u.id}" ${u.id === a.owner ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></td>
-          <td><input data-f="match" value="${esc((a.match || []).join(', '))}" placeholder="예: 8260" style="min-width:120px"></td>
+          <td><input data-f="match" value="${esc((a.match || []).join(', '))}" placeholder="예: 1234" style="min-width:120px"></td>
           <td><button class="btn btn-quiet" data-f="del">✕</button></td>
         </tr>` : `
         <tr><td>${esc(a.name)}</td><td>${a.type === 'card' ? '카드' : a.type === 'bank' ? '통장' : '현금'}</td>

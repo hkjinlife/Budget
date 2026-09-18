@@ -82,7 +82,7 @@ export async function boot() {
 
 function emptyData() {
   return {
-    version: 1, users: [{ id: 'hokyung', name: '진호경' }, { id: 'hyemin', name: '박혜민' }],
+    version: 1, users: [{ id: 'user1', name: '남편' }, { id: 'user2', name: '아내' }],
     accounts: [], categories: [], transactions: [],
     investment: { flows: [], holdings: [], jeonbukLedger: [], valuationDate: today() },
     otherAssets: [], budgets: {}, notes: [], feedback: [],
