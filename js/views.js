@@ -25,7 +25,7 @@ const lockNote = (what) => `<div class="notice">지금은 <b>보기 모드</b>�
 export function welcome() {
   return `
   <div class="card">
-    <h2>우리집 가계부</h2>
+    <h2>자산관리 앱</h2>
     <p class="muted">가족이 같이 쓰는 가계부입니다. 아래 버튼을 누르면 시작됩니다.</p>
     <div class="btn-row" style="margin-top:14px">
       ${gd.isConfigured()
@@ -1340,18 +1340,84 @@ export function giftView() {
   const dedCell = (used, limit) => (used >= limit ? '<span class="neg">다 씀</span>'
     : `${M.manwon(limit - used)}원 남음 <span class="muted">(${M.manwon(used)}원 씀)</span>`);
   const rows = M.giftList().filter((g) => who === 'all' || g.receiver === who);
+  // 준 사람 필터 (받은 사람은 위쪽 통합·사용자 버튼). 세금 현황의 부모 합산 줄은 나눠 계산할 수 없어서
+  // 그 사람이 들어 있는 줄을 통째로 보여주고, 공제는 받은 사람 기준 그대로 둔다
+  const givers = [...new Set(rows.map((g) => g.giver))];
+  const giver = givers.includes(state.ui.giftGiver) ? state.ui.giftGiver : 'all';
+  const shown = rows.filter((g) => giver === 'all' || g.giver === giver);
+  const sum = (list) => {
+    const total = list.reduce((t, g) => t + (Number(g.amount) || 0), 0);
+    const paid = list.reduce((t, g) => t + (Number(g.paid) || 0), 0);
+    return { total, paid, count: list.length, rate: total ? paid / total : 0 };
+  };
+  const tot = sum(shown);
+  const byRecv = [...new Set(shown.map((g) => g.receiver))].map((id) => ({ id, ...sum(shown.filter((g) => g.receiver === id)) }));
+  const groups = st.groups.filter((o) => giver === 'all' || o.givers.includes(giver));
+  const relOf = (name) => [...new Set(rows.filter((g) => g.giver === name).map((g) => g.relation))].join('·');
+  // 10년 합산에서 빠지는 날. 1년 안이면 표시 — 그 뒤 같은 사람에게 받으면 기납부세액을 다시 계산해야 한다
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const dropCell = (g) => {
+    const d = M.giftDropDate(g);
+    const left = Math.round((new Date(d) - new Date(todayIso)) / 86400000);
+    return `<td style="white-space:nowrap">${esc(d.replace(/-/g, '.'))}${left < 0 ? ' <span class="badge">합산 끝</span>'
+      : left <= 365 ? ' <span class="badge">1년 안에 빠짐</span>' : ''}</td>`;
+  };
+  // 가족 차용 (대출 목록에서 family 표시)
+  const fl = M.familyLoans().filter((l) => who === 'all' || l.owner === who);
+  const dday = (n) => (n == null ? '' : n >= 0 ? `D-${n}` : `${-n}일 지남`);
+  const ymd = (d) => (d ? esc(d.replace(/-/g, '.')) : '-');
+  const loanCard = `<div class="card">
+    <div class="card-head"><h2>가족 차용</h2>${ed ? '<button class="btn" id="addFamLoan">+ 가족 차용 추가</button>' : '<span class="muted">증여로 보지 않게 관리 · 대출 탭과 같은 기록</span>'}</div>
+    ${fl.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>빌린 사람 ← 빌려준 사람</th><th class="num">금액</th><th class="num">이자율</th><th>빌린 날 ~ 만기</th>
+        <th>차용증 확정일자</th><th>갱신 예정</th><th class="num">1년 이자 혜택</th><th>증여세</th>${ed ? '<th>메모</th>' : ''}</tr></thead>
+      <tbody>${fl.map((l) => {
+    const info = M.familyLoanInfo(l);
+    const i = state.data.loans.indexOf(l);
+    return ed ? `<tr data-famloan="${i}">
+        <td>${esc(uname(l.owner))} ← <input data-f="lender" value="${esc(l.lender || '')}" placeholder="이름" style="width:80px">
+          <select data-f="lenderRelation">${M.GIFT_RELATIONS.map((r) => `<option ${r === l.lenderRelation ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
+        <td class="num"><input data-f="balance" data-num type="number" value="${l.balance || 0}" style="min-width:120px;text-align:right"></td>
+        <td class="num"><input data-f="rate" data-num type="number" step="0.01" value="${l.rate || 0}" style="width:70px;text-align:right"></td>
+        <td><input data-f="startDate" type="date" value="${esc(l.startDate || '')}"> ~ <input data-f="endDate" type="date" value="${esc(l.endDate || '')}"></td>
+        <td><input data-f="confirmedDate" type="date" value="${esc(l.confirmedDate || '')}"></td>
+        <td><input data-f="renewPlan" type="date" value="${esc(l.renewPlan || '')}"></td>
+        <td class="num">${M.won(info.benefit)}</td>
+        <td>${info.taxable ? '<span class="neg">대상</span>' : '<span class="pos">없음</span>'}</td>
+        <td><input data-f="memo" value="${esc(l.memo || '')}" style="min-width:160px"></td></tr>`
+      : `<tr>
+        <td>${esc(uname(l.owner))} ← ${esc(l.lender || '-')} <span class="muted">(${esc(l.lenderRelation || '')})</span></td>
+        <td class="num">${M.won(l.balance)}</td><td class="num">${Number(l.rate) || 0}%</td>
+        <td>${ymd(l.startDate)} ~ ${ymd(l.endDate)} <span class="muted">${dday(info.toEnd)}</span></td>
+        <td>${ymd(l.confirmedDate)}</td>
+        <td>${ymd(l.renewPlan)} ${l.renewPlan ? `<span class="badge">${dday(info.toRenew)}</span>` : ''}</td>
+        <td class="num">${M.won(info.benefit)}</td>
+        <td>${info.taxable ? '<span class="neg">1천만원 넘음 — 증여로 볼 수 있어요</span>'
+    : `<span class="pos">없음</span> <span class="muted">(한도 ${info.limit ? M.won(info.limit) : '-'})</span>`}</td></tr>`;
+  }).join('')}</tbody></table></div>` : '<p class="muted">가족에게 빌린 돈이 있으면 편집 → + 가족 차용 추가로 넣으세요. 대출 탭과 순자산에도 같이 반영됩니다.</p>'}
+    <p class="muted" style="margin-top:8px">1년 이자 혜택 = 빌린 돈 × (법정 적정이자율 4.6% − 실제 이자율). 이 금액이 1년에 1천만원 이상이면 그만큼을 증여로 봅니다.
+      한도는 무이자로 빌려도 증여세가 없는 금액입니다. 갱신만 반복하고 갚은 기록이 없으면 차용이 아니라 증여로 볼 수 있으니,
+      원금 일부라도 계좌이체로 갚은 기록을 남기고 갱신할 때 차용증 확정일자를 다시 받아 두세요. 참고용이며 세무사 확인을 권합니다.</p>
+  </div>`;
 
   const empty = !st.count ? `<div class="card"><h2>아직 증여 내역이 없습니다</h2>
     <p class="muted">위쪽 <b>편집</b>을 누르고 <b>+ 증여 추가</b>로 넣거나, 증여 파일(.json)을 불러오세요.</p></div>` : '';
 
   return `
   ${empty}
-  ${st.count ? `<div class="grid" style="margin-bottom:14px">
-    <div class="tile"><div class="label">받은 증여 합계</div><div class="value">${M.won(st.total)}</div>
-      <div class="sub">${st.count}건</div></div>
-    <div class="tile"><div class="label">낸 증여세 합계</div><div class="value">${M.won(st.paid)}</div>
-      <div class="sub">평균 실효세율 ${M.pct(st.rate)}</div></div>
-    ${st.receivers.length > 1 ? st.receivers.map((r) => `<div class="tile"><div class="label">${esc(uname(r.id))}</div>
+  ${st.count ? `<div class="filters">
+    <label class="field">준 사람
+      <select id="giftGiver"><option value="all">전체</option>
+        ${givers.map((n) => `<option value="${esc(n)}" ${n === giver ? 'selected' : ''}>${esc(n)} (${esc(relOf(n))})</option>`).join('')}
+      </select></label>
+    <div class="muted" style="flex:2 1 260px">받은 사람은 위쪽 통합·사용자 버튼으로 고릅니다. 공제는 준 사람과 상관없이 받은 사람 기준이에요.</div>
+  </div>
+  <div class="grid" style="margin-bottom:14px">
+    <div class="tile"><div class="label">받은 증여 합계${giver === 'all' ? '' : ` · ${esc(giver)}`}</div><div class="value">${M.won(tot.total)}</div>
+      <div class="sub">${tot.count}건</div></div>
+    <div class="tile"><div class="label">낸 증여세 합계</div><div class="value">${M.won(tot.paid)}</div>
+      <div class="sub">평균 실효세율 ${M.pct(tot.rate)}</div></div>
+    ${byRecv.length > 1 ? byRecv.map((r) => `<div class="tile"><div class="label">${esc(uname(r.id))}</div>
       <div class="value">${M.won(r.total)}</div><div class="sub">세금 ${M.won(r.paid)} · ${r.count}건 · ${M.pct(r.rate)}</div></div>`).join('') : ''}
   </div>
 
@@ -1360,7 +1426,7 @@ export function giftView() {
     <div class="table-wrap"><table>
       <thead><tr><th>받은 사람 ← 준 사람</th><th class="num">10년 합산 증여</th><th class="num">지금 과세표준</th>
         <th class="num">다음 증여 세율</th><th class="num">이 세율로 더 받을 수 있는 돈</th><th class="num">다음 신고 기납부세액</th><th>다음 합산 제외</th></tr></thead>
-      <tbody>${st.groups.map((o) => `<tr>
+      <tbody>${groups.map((o) => `<tr>
         <td style="white-space:normal;min-width:160px">${groupName(o)}${o.estimated ? ' <span class="badge">예상 포함</span>' : ''}</td>
         <td class="num">${M.won(o.window)}</td>
         <td class="num">${M.won(o.base)}</td>
@@ -1384,6 +1450,8 @@ export function giftView() {
     <p class="muted" style="margin-top:8px">공제를 다 쓰면 앞으로 받는 돈은 그대로 과세표준에 더해집니다. 미성년자는 부모 공제가 2천만원입니다.</p>
   </div>` : ''}
 
+  ${loanCard}
+
   ${ed ? `<div class="card" id="giftAdd">
     <div class="card-head"><h2>+ 증여 추가</h2><span class="muted">예상 세액으로 넣고, 신고한 뒤 신고서 숫자로 고칩니다</span></div>
     <div class="row-2">
@@ -1399,7 +1467,7 @@ export function giftView() {
   </div>` : ''}
 
   <details class="card fold" id="giftFold" ${state.ui.giftsOpen === false ? '' : 'open'}>
-    <summary><h2>증여 내역</h2><span class="muted">${rows.length}건</span></summary>
+    <summary><h2>증여 내역</h2><span class="muted">${shown.length}건</span></summary>
     <div class="btn-row" style="margin-bottom:8px">
       <label class="btn">신고서 PDF로 확인<input type="file" id="giftPdf" accept=".pdf,application/pdf" multiple hidden></label>
       <label class="btn btn-quiet">증여 파일 불러오기 (.json)<input type="file" id="giftFile" accept=".json,application/json" hidden></label>
@@ -1407,10 +1475,11 @@ export function giftView() {
     <div id="giftCheck">${renderGiftChecks()}</div>
     ${ed ? '' : lockNote('증여 내역')}
     <div class="table-wrap"><table>
-      <thead><tr><th>증여일</th><th>받은 사람</th><th>준 사람</th><th>유형</th><th class="num">증여재산가액</th>
+      <thead><tr><th>증여일</th><th>합산 제외</th><th>받은 사람</th><th>준 사람</th><th>유형</th><th class="num">증여재산가액</th>
         <th class="num">과세표준</th><th class="num">산출세액</th><th class="num">낸 세금</th><th>상태</th><th>메모</th>${ed ? '<th></th>' : ''}</tr></thead>
-      <tbody>${rows.map((g) => (ed ? `<tr data-gift="${esc(g.id)}">
+      <tbody>${shown.map((g) => (ed ? `<tr data-gift="${esc(g.id)}">
         <td><input data-f="date" type="date" value="${esc(g.date)}"></td>
+        ${dropCell(g)}
         <td>${esc(uname(g.receiver))}</td>
         <td><input data-f="giver" value="${esc(g.giver)}" style="min-width:80px">
           <select data-f="relation">${M.GIFT_RELATIONS.map((r) => `<option ${r === g.relation ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
@@ -1422,7 +1491,7 @@ export function giftView() {
         <td><select data-f="status"><option ${g.status === '신고' ? 'selected' : ''}>신고</option><option ${g.status === '예상' ? 'selected' : ''}>예상</option></select></td>
         <td><input data-f="note" value="${esc(g.note || '')}" style="min-width:160px"></td>
         <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
-    : `<tr><td>${esc(g.date.replace(/-/g, '.'))}</td><td>${esc(uname(g.receiver))}</td>
+    : `<tr><td>${esc(g.date.replace(/-/g, '.'))}</td>${dropCell(g)}<td>${esc(uname(g.receiver))}</td>
         <td>${esc(g.giver)} <span class="muted">(${esc(g.relation)})</span></td><td style="white-space:normal">${esc(g.type || '')}</td>
         <td class="num">${M.won(g.amount)}</td><td class="num">${M.won(g.base)}</td><td class="num">${M.won(g.calcTax)}</td>
         <td class="num">${M.won(g.paid)}</td>
@@ -1431,11 +1500,39 @@ export function giftView() {
       </tbody></table></div>
   </details>
 
+  <p class="muted">합산 제외 = 증여일로부터 10년이 지나 합산에서 빠지는 날. 그 뒤 같은 사람(부모님은 두 분 합쳐)에게 다시 받으면 기납부세액을 새로 계산해야 하니 세무사와 확인하세요.</p>
   <p class="muted">세무사가 아닌 참고용 계산입니다. 세율 1억 이하 10% · 5억 이하 20% · 10억 이하 30% · 30억 이하 40% · 그 이상 50%, 기한 내 신고세액공제 3%.
     새 증여의 예상 세액은 같은 묶음의 마지막 신고 위에 더해지는 것으로 계산합니다(조부모는 세대생략 할증 30%). 최종 신고는 세무사와 확인하세요.</p>`;
 }
 
 function mountGift() {
+  document.querySelectorAll('[data-famloan]').forEach((tr) => {
+    const l = state.data.loans[Number(tr.dataset.famloan)];
+    tr.querySelectorAll('[data-f]').forEach((el) => {
+      const f = el.dataset.f;
+      el.onchange = () => {
+        l[f] = el.hasAttribute('data-num') ? Number(el.value) || 0 : el.value;
+        if (f === 'balance') { l.balanceDate = today(); if (!l.principal) l.principal = l[f]; }
+        if (f === 'lender' && (!l.name || l.name === '가족 차용')) l.name = `${l.lender} 차용`;
+        touch(); render();
+      };
+    });
+  });
+  const addFam = document.getElementById('addFamLoan');
+  if (addFam) addFam.onclick = () => {
+    state.data.loans ||= [];
+    const who = state.ui.user && state.ui.user !== 'all' ? state.ui.user : state.data.users[0].id;
+    const d = today();
+    state.data.loans.push({
+      id: `loan_${Date.now().toString(36)}`, name: '가족 차용', bank: '가족 차용', number: '', owner: who,
+      principal: 0, balance: 0, balanceDate: d, rate: 0, type: 'interest_only', startDate: d,
+      endDate: `${Number(d.slice(0, 4)) + 2}${d.slice(4)}`, monthlyPayment: 0, payAccountId: '', memo: '',
+      family: true, lender: '', lenderRelation: '부', confirmedDate: '', renewPlan: '',
+    });
+    touch(); render();
+  };
+  const giverSel = document.getElementById('giftGiver');
+  if (giverSel) giverSel.onchange = () => { state.ui.giftGiver = giverSel.value; saveUIState(); render(); };
   const fold = document.getElementById('giftFold');
   if (fold) fold.ontoggle = () => { state.ui.giftsOpen = fold.open; saveUIState(); };
 

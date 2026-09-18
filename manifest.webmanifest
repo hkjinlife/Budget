@@ -1,6 +1,6 @@
 {
-  "name": "우리집 가계부",
-  "short_name": "가계부",
+  "name": "자산관리 앱",
+  "short_name": "자산관리",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f4f4f1",

@@ -400,6 +400,8 @@ export const GIFT_RULES = {
   brackets: [[1e8, 0.1, 0], [5e8, 0.2, 1e7], [1e9, 0.3, 6e7], [3e9, 0.4, 1.6e8], [Infinity, 0.5, 4.6e8]],
   limits: { direct: 5e7, other: 1e7, birth: 1e8, spouse: 6e8 },   // 직계존속(10년), 기타친족(10년), 혼인·출산(평생), 배우자(10년)
   creditRate: 0.03,                                                // 기한 내 신고세액공제
+  loanRate: 0.046,       // 가족 간 차용의 법정 적정이자율 (상증법 시행규칙)
+  loanFree: 1e7,         // 1년 이자 혜택(적정이자 − 실제 이자)이 이보다 적으면 증여로 보지 않는다 (상증법 §41의4)
 };
 // 받은 사람 쪽에서 본 관계
 export const GIFT_RELATIONS = ['부', '모', '조부', '조모', '배우자', '장인', '장모', '시부', '시모', '기타친족'];
@@ -522,4 +524,23 @@ export function giftEstimate({ date, receiver, giver, relation, amount }) {
     base, rate: `${Math.round(GIFT_RULES.brackets.find(([upto]) => base <= upto)[1] * 100)}%`, calcTax, prevTax, credit, paid,
     droppedSinceLast: prev.some((g) => g.date < from),
   };
+}
+
+/* ---------- 가족 간 차용 (대출 목록에서 family 표시가 된 것) ---------- */
+export function familyLoans() {
+  return (state.data.loans || []).filter((l) => l.family);
+}
+
+/** 무이자·저리 가족 차용이 증여로 보이지 않는지: 1년 이자 혜택, 한도, 만기·갱신까지 남은 날 */
+export function familyLoanInfo(l, asOf = new Date().toISOString().slice(0, 10)) {
+  const gap = Math.max(0, GIFT_RULES.loanRate - (Number(l.rate) || 0) / 100);
+  const benefit = Math.round((Number(l.balance) || 0) * gap);                 // 1년 이자 혜택
+  const limit = gap ? Math.floor(GIFT_RULES.loanFree / gap) : null;          // 이 금액까지는 증여로 보지 않음
+  const days = (d) => (d ? Math.round((new Date(d) - new Date(asOf)) / 86400000) : null);
+  return { benefit, limit, taxable: benefit >= GIFT_RULES.loanFree, toEnd: days(l.endDate), toRenew: days(l.renewPlan) };
+}
+
+/** 증여가 10년 합산에서 빠지는 날 */
+export function giftDropDate(g) {
+  return addYears(g.date, 10);
 }
