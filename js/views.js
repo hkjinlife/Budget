@@ -431,6 +431,7 @@ function renderReconcile(parsed, rec) {
         </tr>`).join('')}
       </tbody></table></div>
     <p class="muted" style="margin-top:8px">새로 등록하면 다음부터는 이 카드가 자동으로 그 사람 것으로 들어갑니다.</p>
+    ${rec.note ? `<div class="notice" style="margin-top:12px">${esc(rec.note)}</div>` : ''}
     <div class="btn-row" style="margin-top:12px">
       <button class="btn btn-primary" id="impAdd" ${rec.fresh.length ? '' : 'disabled'}>${rec.fresh.length}건 가계부에 넣기</button>
     </div>

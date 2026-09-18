@@ -22,10 +22,14 @@ const timeOf = (v) => (String(v ?? '').match(/(\d{1,2}:\d{2})(:\d{2})?/) || [])[
 /** 파일에 적힌 카드번호·계좌번호(예: "본인1234*", "1***-******-5678*")로 등록된 계정을 찾는다 */
 export function matchAccount(cardRaw) {
   if (!cardRaw) return null;
-  const digits = String(cardRaw).replace(/\D/g, '');
+  const raw = String(cardRaw);
+  const digits = raw.replace(/\D/g, '');
   return state.data.accounts.find((a) => (a.match || []).some((m) => {
-    const md = String(m).replace(/\D/g, '');
-    return md && digits.includes(md);
+    const key = String(m).trim();
+    if (!key) return false;
+    const md = key.replace(/\D/g, '');
+    if (md) return digits.includes(md);          // 숫자면 카드·계좌번호로 비교
+    return raw.includes(key);                    // 글자면 카드 이름으로 비교 (예: "The Platinum Ed2")
   })) || null;
 }
 
@@ -60,6 +64,37 @@ function parseHyundai(text) {
     });
   });
   return { rows, skipped, kind: '현대카드' };
+}
+
+/** 현대카드 '이용대금명세서': 가맹점과 금액이 한 칸에 붙어 있고, 카드가 상품명으로 적힌다 */
+function parseHyundaiStatement(text) {
+  const clean = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  if (!/이용대금명세서/.test(clean)) return null;
+  const rows = [];
+  const trs = clean.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+  trs.forEach((tr) => {
+    const cells = (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) || []).map((c) => {
+      const el = document.createElement('div');
+      el.innerHTML = c.replace(/<t[dh][^>]*>|<\/t[dh]>/gi, '');
+      return el.textContent.replace(/\s+/g, ' ').trim();
+    });
+    if (cells.length < 9) return;
+    const date = isoDate(cells[0]);
+    if (!date) return;
+    const m = cells[2].match(/^(.*?)\s*(-?[\d,]+)$/);      // "씨유CU광명현대점 6,000"
+    if (!m) return;
+    const merchant = m[1].replace(/^#/, '').trim();          // '#'은 자동납부 표시
+    const amount = num(m[2]);
+    if (!merchant || !amount) return;
+    const cardRaw = cells[1];
+    const acct = matchAccount(cardRaw);
+    rows.push({
+      date, time: '', merchant, amount: -amount, cardRaw,
+      accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
+      type: 'expense', memo: cardRaw, source: 'import:현대카드명세서',
+    });
+  });
+  return rows.length ? { rows, skipped: [], kind: '현대카드 명세서' } : null;
 }
 
 /** 신한카드 표준 엑셀 */
@@ -152,7 +187,7 @@ export async function parseFile(file) {
   let result = null;
   if (name.endsWith('.xls')) {
     const text = await file.text();
-    if (/<table|<tr/i.test(text)) result = parseHyundai(text);
+    if (/<table|<tr/i.test(text)) result = parseHyundaiStatement(text) || parseHyundai(text);
   }
   if (!result && /\.(xlsx|xls|csv|txt)$/.test(name)) {
     if (typeof XLSX === 'undefined') throw new Error('엑셀 읽기 도구를 불러오지 못했습니다. 인터넷 연결을 확인하세요.');
@@ -226,5 +261,8 @@ export function reconcile(parsed) {
     && (accounts.size ? accounts.has(t.accountId) : true)
     && !fileKeys.has(dedupKey(t)));
 
-  return { fresh, dup, mismatched, onlyInApp, range, skipped: parsed.skipped || [] };
+  const note = parsed.kind === '현대카드 명세서'
+    ? '명세서는 매입일 기준이라 실시간 이용내역과 날짜가 하루 이틀 어긋날 수 있습니다. 이미 넣은 기간과 겹치면 같은 거래가 두 번 들어갈 수 있으니, 겹치지 않는 기간만 넣으세요.'
+    : '';
+  return { fresh, dup, mismatched, onlyInApp, range, note, skipped: parsed.skipped || [] };
 }
