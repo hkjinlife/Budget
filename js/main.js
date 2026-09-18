@@ -30,22 +30,48 @@ let pushTimer = null;
 
 function scheduleDrivePush() {
   if (!gd.drive.fileId || state.ui.autoSync === false) return;
+  if (gd.needsLogin()) { paintSyncBtn(); return; }      // 로그인이 풀렸으면 버튼만 보여주고 기다린다
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
-    gd.push({ merge: mergeIncoming }).then(render).catch((e) => toast(`드라이브 저장 실패: ${e.message}`));
+    gd.push({ merge: mergeIncoming, interactive: false })
+      .then(render)
+      .catch((e) => { if (e.name === 'NeedLogin') paintSyncBtn(); else toast(`드라이브 저장 실패: ${e.message}`); });
   }, 3000);
 }
 
+/** 구글 권한이 풀렸을 때만 위쪽에 '동기화' 버튼을 보여준다 */
+const syncBtn = document.getElementById('syncBtn');
+function paintSyncBtn() {
+  if (!syncBtn) return;
+  const need = gd.isConfigured() && gd.needsLogin();
+  syncBtn.hidden = !need;
+  syncBtn.textContent = state.dirty ? '↻ 동기화 (저장할 것 있음)' : '↻ 동기화';
+}
+
+async function syncNow() {
+  // 버튼을 누른 직후라 로그인 창이 막히지 않는다. 한 번 허용했으면 창이 잠깐 떴다 닫힌다.
+  const r = await gd.pull({ merge: mergeIncoming, interactive: true });
+  if (state.dirty) await gd.push({ merge: mergeIncoming, interactive: true });
+  state.dirty = false;
+  paintSyncBtn();
+  render();
+  toast(r?.added ? `동기화했습니다. 새 거래 ${r.added}건` : '동기화했습니다.');
+}
+
 async function driveStart() {
+  gd.preload();
   if (!gd.isConfigured() || !gd.restoreFile()) return;
+  if (gd.needsLogin()) {        // 1시간이 지나 권한이 풀림 → 자동으로 창을 띄우지 않고 버튼만 보여준다
+    paintSyncBtn();
+    return;
+  }
   try {
-    await gd.connect({ silent: true });
-    const r = await gd.pull({ merge: mergeIncoming });
+    const r = await gd.pull({ merge: mergeIncoming, interactive: false });
     if (r?.added) toast(`드라이브에서 새 거래 ${r.added}건을 받았습니다.`);
     state.dirty = false;
     render();
-  } catch {
-    toast('구글 연결이 풀렸습니다. 설정에서 다시 연결해주세요.');
+  } catch (e) {
+    paintSyncBtn();
   }
 }
 
@@ -69,6 +95,9 @@ async function start() {
   onChange(paintSaveState);
   onChange(() => { if (state.dirty) scheduleDrivePush(); });
   gd.onDriveChange(paintSaveState);
+  gd.onDriveChange(paintSyncBtn);
+  onChange(paintSyncBtn);
+  if (syncBtn) syncBtn.onclick = () => syncNow().catch((e) => toast(e.message));
   renderUserSwitch();
   render();
   paintSaveState();
@@ -78,6 +107,7 @@ async function start() {
     const b = e.target.closest('.tab');
     if (!b) return;
     state.ui.view = b.dataset.view;
+    state.ui.fromDash = false;
     saveUI();
     render();
   });
@@ -93,7 +123,8 @@ async function start() {
     try {
       if (gd.drive.fileId) {
         clearTimeout(pushTimer);
-        await gd.push({ merge: mergeIncoming });
+        await gd.push({ merge: mergeIncoming, interactive: true });
+        paintSyncBtn();
         toast('구글 드라이브에 저장했습니다.');
         render();
         return;
@@ -106,7 +137,9 @@ async function start() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && gd.drive.fileId && !state.dirty
         && state.ui.autoSync !== false) {
-      gd.pull({ merge: mergeIncoming }).then((r) => { if (r?.added) render(); }).catch(() => {});
+      if (gd.needsLogin()) { paintSyncBtn(); return; }
+      gd.pull({ merge: mergeIncoming, interactive: false }).then((r) => { if (r?.added) render(); })
+        .catch(() => paintSyncBtn());
     }
   });
 

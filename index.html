@@ -9,9 +9,10 @@
 <meta name="apple-mobile-web-app-title" content="우리집 가계부">
 <meta name="theme-color" content="#1f3864">
 <title>우리집 가계부</title>
-<link rel="stylesheet" href="app.css?v=4">
+<link rel="stylesheet" href="app.css?v=7">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <script src="vendor/chart.umd.min.js" defer></script>
 <script src="vendor/xlsx.full.min.js" defer></script>
 </head>
@@ -20,7 +21,10 @@
 <header class="topbar">
   <div class="topbar-row">
     <h1>우리집 가계부</h1>
-    <div class="save-state" id="saveState" title="저장 상태">불러오는 중…</div>
+    <div class="topbar-right">
+      <button class="btn sync-chip" id="syncBtn" type="button" hidden>↻ 동기화</button>
+      <div class="save-state" id="saveState" title="저장 상태">불러오는 중…</div>
+    </div>
   </div>
   <div class="topbar-row">
     <div class="segmented" id="userSwitch" role="tablist" aria-label="사용자 선택"></div>

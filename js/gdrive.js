@@ -55,8 +55,27 @@ async function ensureTokenClient() {
   return tokenClient;
 }
 
-/** 로그인해서 접근 토큰을 받는다. silent=true면 창을 띄우지 않고 조용히 시도한다 */
-export async function connect({ silent = false } = {}) {
+/** 로그인 도구를 미리 불러둔다. 버튼을 눌렀을 때 창이 바로 떠야 브라우저가 막지 않는다(특히 아이폰) */
+export function preload() {
+  if (isConfigured()) ensureTokenClient().catch(() => { /* 오프라인이면 나중에 */ });
+}
+
+/** 저장된 접근 권한이 아직 살아 있는지 (구글은 브라우저 앱에 1시간짜리 권한만 준다) */
+export function hasValidToken() {
+  if (drive.token && Date.now() < drive.tokenExpiry) return true;
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_TOKEN) || 'null');
+    if (saved && Date.now() < saved.e) { drive.token = saved.t; drive.tokenExpiry = saved.e; return true; }
+  } catch { /* 무시 */ }
+  return false;
+}
+
+export function needsLogin() {
+  return !!drive.fileId && !hasValidToken();
+}
+
+/** 로그인해서 접근 토큰을 받는다. 반드시 버튼을 누른 직후에 불러야 한다(아니면 브라우저가 창을 막는다) */
+export async function connect() {
   if (!isConfigured()) throw new Error('구글 연동 설정이 없습니다. js/config.js를 채워주세요.');
   const client = await ensureTokenClient();
   return new Promise((res, rej) => {
@@ -67,22 +86,27 @@ export async function connect({ silent = false } = {}) {
       try {
         localStorage.setItem(LS_TOKEN, JSON.stringify({ t: drive.token, e: drive.tokenExpiry }));
       } catch { /* 무시 */ }
+      try { localStorage.setItem('budget.gdrive.granted', '1'); } catch { /* 무시 */ }
       emitDrive('구글 연결됨');
       res(drive.token);
     };
+    client.error_callback = (err) => rej(new Error(err?.type === 'popup_closed'
+      ? '로그인 창이 닫혔습니다.' : '로그인 창을 열지 못했습니다. 다시 눌러주세요.'));
     try {
-      client.requestAccessToken({ prompt: silent ? '' : 'consent' });
+      // 한 번 허용한 사람은 동의 화면 없이 창이 잠깐 떴다가 바로 닫힌다
+      client.requestAccessToken({ prompt: '' });
     } catch (e) { rej(e); }
   });
 }
 
-async function token() {
-  if (drive.token && Date.now() < drive.tokenExpiry) return drive.token;
-  try {
-    const saved = JSON.parse(localStorage.getItem(LS_TOKEN) || 'null');
-    if (saved && Date.now() < saved.e) { drive.token = saved.t; drive.tokenExpiry = saved.e; return drive.token; }
-  } catch { /* 무시 */ }
-  return connect({ silent: true });
+export class NeedLogin extends Error {
+  constructor() { super('구글 연결이 필요합니다.'); this.name = 'NeedLogin'; }
+}
+
+async function token({ interactive = true } = {}) {
+  if (hasValidToken()) return drive.token;
+  if (!interactive) throw new NeedLogin();
+  return connect();
 }
 
 export function signOut() {
@@ -207,11 +231,12 @@ async function meta() {
 }
 
 /** 드라이브 파일을 읽어 지금 데이터와 합친다 */
-export async function pull({ merge }) {
+export async function pull({ merge, interactive = true }) {
   if (!drive.fileId) throw new Error('먼저 파일을 고르세요.');
+  const tk0 = await token({ interactive });
   drive.busy = true; emitDrive('불러오는 중…');
   try {
-    const tk = await token();
+    const tk = tk0;
     const r = await fetch(`https://www.googleapis.com/drive/v3/files/${drive.fileId}?alt=media`, {
       headers: { Authorization: `Bearer ${tk}` },
     });
@@ -228,18 +253,18 @@ export async function pull({ merge }) {
 }
 
 /** 지금 데이터를 드라이브에 쓴다. 그 사이 다른 기기가 고쳤으면 먼저 합친다 */
-export async function push({ merge, force = false } = {}) {
+export async function push({ merge, force = false, interactive = true } = {}) {
   if (!drive.fileId) throw new Error('먼저 파일을 고르세요.');
+  const tk = await token({ interactive });
   drive.busy = true; emitDrive('저장 중…');
   try {
     if (!force && drive.lastModified) {
       const info = await meta();
       if (info.modifiedTime !== drive.lastModified) {
         emitDrive('다른 기기의 변경을 먼저 합치는 중…');
-        await pull({ merge });
+        await pull({ merge, interactive: false });
       }
     }
-    const tk = await token();
     const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${drive.fileId}?uploadType=media&fields=modifiedTime`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' },

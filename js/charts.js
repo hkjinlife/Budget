@@ -40,7 +40,7 @@ function destroy(id) {
 }
 
 /** 월별 소비(고정비/변동비 누적 막대) + 수입(선) */
-export function monthlyChart(canvas, { labels, fixed, variable, income }) {
+export function monthlyChart(canvas, { labels, fixed, variable, income, onPick }) {
   const t = theme();
   destroy(canvas.id);
   const c = new Chart(canvas, {
@@ -66,6 +66,13 @@ export function monthlyChart(canvas, { labels, fixed, variable, income }) {
     },
     options: {
       ...base(t),
+      onClick: (evt, els, chart) => {
+        if (!onPick) return;
+        // 누른 조각(고정비/변동비/수입) 하나만 찾는다
+        const hit = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true)[0] || els[0];
+        if (hit) onPick(hit.index, hit.datasetIndex);
+      },
+      onHover: (evt, els) => { evt.native.target.style.cursor = onPick && els.length ? 'pointer' : 'default'; },
       scales: {
         x: { stacked: true, grid: { display: false }, border: { color: t.line }, ticks: { color: t.sub, font: { size: 12 } } },
         y: {
@@ -82,7 +89,7 @@ export function monthlyChart(canvas, { labels, fixed, variable, income }) {
 }
 
 /** 카테고리별 가로 막대 — 값은 막대 끝에 직접 표시 */
-export function categoryChart(canvas, rows, { compare = null } = {}) {
+export function categoryChart(canvas, rows, { compare = null, onPick } = {}) {
   const t = theme();
   destroy(canvas.id);
   const labelPlugin = {
@@ -119,6 +126,11 @@ export function categoryChart(canvas, rows, { compare = null } = {}) {
     },
     options: {
       ...base(t),
+      onClick: (evt, els) => {
+        if (!onPick || !els.length) return;
+        onPick(rows[els[0].index]);
+      },
+      onHover: (evt, els) => { evt.native.target.style.cursor = onPick && els.length ? 'pointer' : 'default'; },
       indexAxis: 'y',
       layout: { padding: { right: 96 } },
       plugins: {

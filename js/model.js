@@ -365,10 +365,10 @@ export function shortWon(n) {
 /* ---------- 월말 정리 ---------- */
 // kind: upload(파일 올리기) / holdings(투자 평가금액 여러 개) / asset(자산 하나의 금액)
 export const DEFAULT_CHECKLIST = [
-  { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀(.xlsx)을 받아 올리세요' },
+  { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀이나 PDF를 받아 올리세요' },
   { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용대금명세서 또는 실시간 이용내역(.xls)' },
-  { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역 엑셀' },
-  { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액을 고치세요' },
+  { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역 엑셀이나 PDF' },
+  { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액을 고치세요', alsoUpload: true },
   { id: 'kis', name: '한국투자증권', kind: 'asset', match: '연금저축|한국투자', hint: '연금저축 평가금액과 원금', alsoUpload: true, withPrincipal: true },
   { id: 'apt', name: '아파트 시세', kind: 'asset', match: '아파트', hint: 'KB시세나 실거래가' },
   { id: 'housing_sub', name: '주택청약', kind: 'asset', match: '청약', hint: '지금까지 넣은 총액' },

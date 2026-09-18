@@ -1,7 +1,7 @@
 // 오프라인 대응.
 // 앱 코드(HTML·CSS·JS)는 "새 것 먼저, 안 되면 캐시" — 업데이트가 바로 반영된다.
 // 라이브러리·아이콘은 "캐시 먼저" — 잘 바뀌지 않고 용량이 크다.
-const CACHE = 'budget-app-v3';
+const CACHE = 'budget-app-v4';
 const SHELL = [
   './',
   './index.html',
@@ -19,6 +19,8 @@ const SHELL = [
   './vendor/xlsx.full.min.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

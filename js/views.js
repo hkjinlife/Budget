@@ -2,7 +2,7 @@
 import { state, touch, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
 import * as M from './model.js';
 import { monthlyChart, categoryChart, investChart, loanChart } from './charts.js';
-import { parseFile, reconcile } from './importers.js';
+import { parseFile, reconcile, applyInvestFlows, suggestLinks, commitLinks, autoLinks, DEFAULT_AUTOLINKS } from './importers.js';
 import * as gd from './gdrive.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -163,13 +163,13 @@ export function dashboard() {
   </div>
 
   <div class="card">
-    <div class="card-head"><h2>월별 소비와 수입</h2><span class="muted">막대=소비(누적), 선=정기 수입</span></div>
+    <div class="card-head"><h2>월별 소비와 수입</h2><span class="muted">막대=소비(누적), 선=정기 수입 · 누르면 그달 내역</span></div>
     <div class="chart-box"><canvas id="chartMonthly"></canvas></div>
   </div>
 
   <div class="card">
     <div class="card-head"><h2>${monthLabel(cur)} 카테고리별 소비</h2>
-      <span class="muted">${prevMo ? `괄호는 ${monthLabel(prevMo)} 대비` : ''}</span></div>
+      <span class="muted">막대를 누르면 내역이 보입니다${prevMo ? ` · 괄호는 ${monthLabel(prevMo)} 대비` : ''}</span></div>
     <div class="chart-box tall"><canvas id="chartCategory"></canvas></div>
     <div class="legend">
       <span><i style="background:var(--series-1)"></i>고정비</span>
@@ -179,7 +179,7 @@ export function dashboard() {
 
   ${once.length ? `<div class="card"><div class="card-head"><h2>${monthLabel(cur)} 일회성 지출</h2>
     <span class="muted">월 평균에서 제외됨</span></div>
-    <table><tbody>${once.map((r) => `<tr><td>${esc(r.name)}</td><td class="num">${M.won(r.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <table><tbody>${once.map((r) => `<tr data-drill-once="${r.id}" style="cursor:pointer"><td>${esc(r.name)} ›</td><td class="num">${M.won(r.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
 
   ${(state.data.notes || []).length ? `<div class="card"><h2>참고</h2>
     <ul class="tight">${state.data.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
@@ -197,16 +197,34 @@ function mountDashboard() {
   const cur = state.ui.month;
   const totals = M.monthTotals();
   const show = mos.slice(-8);
+  // 막대를 누르면 거래내역 탭에서 그 항목만 걸러 보여준다
+  const drill = (filter) => {
+    state.ui.filter = { month: '', type: 'expense', q: '', cat: '', major: '', ...filter };
+    state.ui.fromDash = true;
+    state.ui.view = 'transactions';
+    render();
+    window.scrollTo(0, 0);
+  };
   monthlyChart(document.getElementById('chartMonthly'), {
     labels: show.map(monthLabel),
     fixed: show.map((m) => totals.get(m)?.고정비 || 0),
     variable: show.map((m) => totals.get(m)?.변동비 || 0),
     income: show.map((m) => totals.get(m)?.incomeMain || 0),
+    onPick: (i, ds) => {
+      if (ds === 2) drill({ month: show[i], type: 'income' });        // 수입 선
+      else drill({ month: show[i], major: ds === 0 ? '고정비' : '변동비' });
+    },
   });
   const rows = M.categoryTotalsFor(cur).filter((r) => r.major !== '일회성');
   const prevMo = mos[mos.indexOf(cur) - 1];
   const prev = prevMo ? new Map(M.categoryTotalsFor(prevMo).map((r) => [r.id, r.amount])) : null;
-  categoryChart(document.getElementById('chartCategory'), rows, { compare: prev });
+  categoryChart(document.getElementById('chartCategory'), rows, {
+    compare: prev,
+    onPick: (row) => drill({ month: cur, cat: row.id }),
+  });
+  document.querySelectorAll('[data-drill-once]').forEach((tr) => {
+    tr.onclick = () => drill({ month: cur, cat: tr.dataset.drillOnce });
+  });
   document.getElementById('monthPick').onchange = (e) => {
     state.ui.month = e.target.value;
     render();
@@ -217,7 +235,13 @@ function mountDashboard() {
 export function transactions() {
   const f = (state.ui.filter ||= { month: '', type: 'expense', q: '', cat: '' });
   const mos = M.months();
+  const chips = [f.month && `${Number(f.month.slice(5))}월`, f.major, f.cat && M.categoryName(f.cat)].filter(Boolean);
   return `
+  ${state.ui.fromDash ? `<div class="drill-bar">
+    <button class="btn btn-quiet" id="backDash">‹ 대시보드</button>
+    <span>${chips.map((c) => `<span class="chip">${esc(c)}</span>`).join(' ')}</span>
+    <button class="btn btn-quiet" id="clearFilter">전체 보기</button>
+  </div>` : ''}
   <div class="filters">
     <label class="field">달
       <select id="fMonth"><option value="">전체</option>
@@ -238,6 +262,7 @@ function filteredTx() {
   return M.visibleTx().filter((t) => (!f.month || t.date.startsWith(f.month))
     && (!f.type || t.type === f.type)
     && (!f.cat || t.categoryId === f.cat)
+    && (!f.major || (t.type === 'expense' && M.majorOf(t.categoryId) === f.major))
     && (!f.q || (t.merchant || '').includes(f.q) || (t.memo || '').includes(f.q)))
     .sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
 }
@@ -275,6 +300,14 @@ function mountTransactions() {
     el.addEventListener(ev, () => { f[key] = el.value; draw(); });
   };
   on('fMonth', 'month'); on('fType', 'type'); on('fCat', 'cat'); on('fQ', 'q', 'input');
+  const back = document.getElementById('backDash');
+  if (back) back.onclick = () => { state.ui.fromDash = false; state.ui.view = 'dashboard'; render(); };
+  const clr = document.getElementById('clearFilter');
+  if (clr) clr.onclick = () => {
+    state.ui.filter = { month: '', type: 'expense', q: '', cat: '', major: '' };
+    state.ui.fromDash = false;
+    render();
+  };
   function bindRows() {
     if (!editable()) return;
     document.querySelectorAll('#txTable tbody tr').forEach((tr) => {
@@ -532,11 +565,68 @@ function bindCardMapping(parsed, rec, out, onDone) {
       if (m) { r.accountId = m.accountId; r.owner = m.owner; }
     });
     const { added, dup } = addTransactions(rec.fresh);
+    // 기본(수기 모드)에서는 업로드가 자산·원금을 건드리지 않는다. 잔액·원금은 월말 정리에서 입력.
+    const flowNotes = state.data.linkSuggest ? applyInvestFlows(added) : [];
+    // 저축·투자로 보이는 출금을 자산에 연결할지 묻는 화면 (설정에서 켠 경우만. 기본은 월말에 잔액을 직접 입력)
+    const sugg = state.data.linkSuggest ? suggestLinks(added) : [];
+    if (flowNotes.length) touch();
     toast(`${added.length}건 추가했습니다.`);
     onDone?.(added.length);
     out.innerHTML = `<div class="card"><h2>완료</h2>
-      <p>${added.length}건을 가계부에 넣었습니다.${dup.length ? ` (중복 ${dup.length}건은 건너뜀)` : ''}
-      <b>저장</b> 버튼을 눌러 공유 폴더 파일에 반영하세요.</p></div>`;
+      <p>${added.length}건을 가계부에 넣었습니다.${dup.length ? ` (중복 ${dup.length}건은 건너뜀)` : ''}</p>
+      ${flowNotes.length ? `<div class="notice">자동으로 연결했습니다: ${flowNotes.map(esc).join(' · ')}</div>` : ''}
+    </div>
+    ${sugg.length ? renderLinkSuggestions(sugg) : ''}`;
+    if (sugg.length) bindLinkSuggestions(sugg, out);
+  };
+}
+
+/* ---------- 저축·투자 연결 확인 ---------- */
+function renderLinkSuggestions(sugg) {
+  const assets = state.data.otherAssets || [];
+  const pick = (s2) => {
+    if (!s2.asset) return '';
+    const re = new RegExp(s2.asset);
+    return assets.find((a) => re.test(a.name))?.name || '';
+  };
+  return `<div class="card">
+    <div class="card-head"><h2>저축·투자로 보이는 돈</h2><span class="muted">${sugg.length}건</span></div>
+    <p class="muted">연금저축·청약처럼 자산으로 가는 돈이면 대상을 고르세요. 그 자산의 원금과 금액이 늘어납니다.
+      <b>다음부터 자동</b>을 체크하면 같은 적요는 다음 달부터 미리 골라둡니다.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>날짜</th><th>적요</th><th class="num">금액</th><th>어디로</th><th>다음부터 자동</th></tr></thead>
+      <tbody>${sugg.map((s2, i) => {
+    const chosen = pick(s2);
+    return `<tr data-sugg="${i}">
+        <td>${s2.t.date.slice(5)}</td>
+        <td style="white-space:normal">${esc(s2.t.merchant)}</td>
+        <td class="num">${M.won(-s2.t.amount)}</td>
+        <td><select data-sel>
+          <option value="">연결 안 함</option>
+          ${assets.map((a) => `<option value="${esc(a.name)}" ${a.name === chosen ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+        </select></td>
+        <td style="text-align:center"><input type="checkbox" data-remember ${s2.ruleId ? 'disabled title="이미 자동으로 골라지는 항목"' : ''}></td>
+      </tr>`;
+  }).join('')}</tbody></table></div>
+    <div class="btn-row" style="margin-top:10px"><button class="btn btn-primary" id="linkApply">반영하기</button>
+      <span class="muted" style="align-self:center">평가금액은 월말 정리에서 실제 값으로 고치면 됩니다</span></div>
+  </div>`;
+}
+
+function bindLinkSuggestions(sugg, out) {
+  const btn = out.querySelector('#linkApply');
+  if (!btn) return;
+  btn.onclick = () => {
+    const choices = [...out.querySelectorAll('[data-sugg]')].map((tr) => ({
+      t: sugg[Number(tr.dataset.sugg)].t,
+      assetName: tr.querySelector('[data-sel]').value,
+      remember: tr.querySelector('[data-remember]').checked,
+    }));
+    const notes = commitLinks(choices);
+    touch();
+    btn.closest('.card').innerHTML = `<h2>반영했습니다</h2>
+      <p>${notes.length ? notes.map(esc).join(' · ') : '연결한 항목이 없습니다.'}</p>`;
+    toast(notes.length ? `자산에 반영했습니다: ${notes.join(', ')}` : '연결하지 않았습니다.');
   };
 }
 
@@ -549,7 +639,10 @@ function renderReconcile(parsed, rec) {
       <span class="muted">${rec.range.from} ~ ${rec.range.to}</span></div>
     <div class="grid">
       <div class="tile"><div class="label">새로 추가할 거래</div><div class="value">${rec.fresh.length}건</div>
-        <div class="sub">${M.won(rec.fresh.filter((r) => r.amount < 0).reduce((s, r) => s + -r.amount, 0))}</div></div>
+        <div class="sub">소비 ${M.won(rec.fresh.filter((r) => r.type === 'expense').reduce((s, r) => s + -r.amount, 0))}${(() => {
+    const other = rec.fresh.filter((r) => r.type !== 'expense').length;
+    return other ? ` · 이체·투자·수입 ${other}건` : '';
+  })()}</div></div>
       <div class="tile"><div class="label">이미 있는 거래</div><div class="value">${rec.dup.length}건</div><div class="sub">건너뜁니다</div></div>
       <div class="tile"><div class="label">금액이 다른 건</div><div class="value ${rec.mismatched.length ? 'neg' : ''}">${rec.mismatched.length}건</div><div class="sub">확인 필요</div></div>
       <div class="tile"><div class="label">앱에만 있는 거래</div><div class="value ${rec.onlyInApp.length ? 'neg' : ''}">${rec.onlyInApp.length}건</div><div class="sub">직접 입력했거나 파일에 없음</div></div>
@@ -624,6 +717,26 @@ function shiftMonth(month, n) {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** 이름의 "(7,242.31 USD)"에서 달러를 꺼낸다 (예전 기록 호환) */
+function usdOf(h) {
+  const m = (h.name || '').match(/([\d,.]+)\s*USD/);
+  return m ? Number(m[1].replace(/,/g, '')) : null;
+}
+
+/** 은행이 적용한 환율(원화÷달러)과 내 평균 매입 환율(넣은 원화÷달러) */
+function fxRateText(usd, krw, principal) {
+  if (!usd || !krw) return '달러와 원화 잔액을 은행 앱에서 보고 적으세요';
+  const bank = krw / usd;
+  let txt = `은행 환산 환율 ${bank.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}원`;
+  if (principal) {
+    const avg = principal / usd;
+    const diff = krw - principal;
+    txt += ` · 내 평균 매입 환율 ${avg.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}원`
+      + ` · 환차 ${diff >= 0 ? '+' : ''}${Math.round(diff).toLocaleString('ko-KR')}원`;
+  }
+  return txt;
+}
+
 export function monthlyView() {
   const month = state.ui.chkMonth || today().slice(0, 7);
   state.ui.chkMonth = month;
@@ -644,7 +757,7 @@ export function monthlyView() {
     let body = '';
     if (it.kind === 'upload') {
       body = `<div class="btn-row"><label class="btn" style="display:inline-block">파일 올리기
-          <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv" hidden></label></div>
+          <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv,.pdf" hidden></label></div>
         <div id="upOut_${it.id}"></div>`;
     } else if (it.kind === 'asset') {
       const a = M.findAsset(it);
@@ -667,16 +780,37 @@ export function monthlyView() {
         ${last ? `<button class="btn btn-quiet" data-assetsame="${it.id}" style="padding-left:0">지난 값과 같음 (${koWon(last)})</button>` : ''}
         ${it.alsoUpload ? `<details class="more" style="margin-top:6px"><summary class="muted">거래내역 파일도 올리기 (선택)</summary>
           <div class="btn-row" style="margin-top:8px"><label class="btn" style="display:inline-block">파일 올리기
-            <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv" hidden></label></div>
+            <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv,.pdf" hidden></label></div>
           <div id="upOut_${it.id}"></div></details>` : ''}`;
     } else if (it.kind === 'holdings') {
       const hs = (state.data.investment?.holdings || []).filter((h) => (h.group || 'jeonbuk') === (it.group || 'jeonbuk'));
-      body = hs.length ? `<div class="table-wrap"><table><tbody>${hs.map((h) => `<tr>
+      const fxInfo = M.investSummary().fx;
+      body = hs.length ? `<div class="table-wrap"><table><tbody>${hs.map((h) => (h.kind === 'fx' ? `<tr>
+          <td style="white-space:normal">${esc(h.name.replace(/\s*\([\d,.]+\s*USD\)/, ''))}
+            <div class="muted" data-fxinfo="${esc(h.name)}" data-fxprin="${fxInfo?.principal || 0}">${fxRateText(h.usd ?? usdOf(h), h.value, fxInfo?.principal)}</div></td>
+          <td class="num"><div class="fx-grid">
+            <label>달러<input type="number" inputmode="decimal" step="0.01" data-fxusd="${esc(h.name)}" value="${h.usd ?? usdOf(h) ?? ''}" placeholder="7242.31"></label>
+            <label>원화<input type="number" inputmode="numeric" data-fxkrw-in="${esc(h.name)}" value="${h.value || ''}" placeholder="10016114"></label>
+          </div>
+            <input type="hidden" data-hold="${it.id}" data-hname="${esc(h.name)}" value="${h.value}"></td>
+        </tr>` : `<tr>
           <td style="white-space:normal">${esc(h.name)}</td>
           <td class="num"><input type="number" inputmode="numeric" data-hold="${it.id}" data-hname="${esc(h.name)}" value="${h.value}" style="min-width:120px;text-align:right"></td>
-        </tr>`).join('')}</tbody></table></div>
+        </tr>`)).join('')}</tbody></table></div>
+        <div class="muted" style="margin:12px 0 4px">이번 달 이 계좌에 <b>밖에서 넣은 돈 / 밖으로 뺀 돈</b> (없으면 비워두세요)</div>
+        <div class="row-2">
+          <label class="field">넣은 돈 (만원)<input type="number" inputmode="numeric" data-flowin="${it.id}" placeholder="예: 500"></label>
+          <label class="field">뺀 돈 (만원)<input type="number" inputmode="numeric" data-flowout="${it.id}" placeholder="예: 0"></label>
+        </div>
+        <p class="muted" style="margin-top:0">펀드를 사고판 것, 외화예금으로 환전한 것은 넣지 마세요. 원금이 바뀌는 돈만 적습니다.</p>
         <div class="btn-row" style="margin-top:8px"><button class="btn btn-primary" data-holdsave="${it.id}">평가금액 저장</button></div>`
         : '<p class="muted">투자 탭에 등록된 자산이 없습니다.</p>';
+      if (it.alsoUpload) {
+        body += `<details class="more" style="margin-top:6px"><summary class="muted">거래내역 파일도 올리기 (엑셀·PDF, 선택)</summary>
+          <div class="btn-row" style="margin-top:8px"><label class="btn" style="display:inline-block">파일 올리기
+            <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv,.pdf" hidden></label></div>
+          <div id="upOut_${it.id}"></div></details>`;
+      }
     }
     return `<div class="card chk-item ${s2.done ? 'is-done' : ''}">${head}<div class="chk-body">${body}</div></div>`;
   };
@@ -789,15 +923,47 @@ function mountMonthly() {
   });
 
   // 전북은행 등 투자 평가금액
+  // 외화예금: 은행 앱의 달러·원화 잔액을 그대로 적으면 환율은 앱이 계산한다
+  document.querySelectorAll('[data-fxusd]').forEach((usdIn) => {
+    const name = usdIn.dataset.fxusd;
+    const krwIn = document.querySelector(`[data-fxkrw-in="${CSS.escape(name)}"]`);
+    const hidden = document.querySelector(`[data-hold][data-hname="${CSS.escape(name)}"]`);
+    const info = document.querySelector(`[data-fxinfo="${CSS.escape(name)}"]`);
+    const calc = () => {
+      const usd = Number(usdIn.value || 0);
+      const krw = Number(krwIn.value || 0);
+      if (krw) hidden.value = krw;
+      info.textContent = fxRateText(usd, krw, Number(info.dataset.fxprin || 0));
+    };
+    usdIn.addEventListener('input', calc);
+    krwIn.addEventListener('input', calc);
+  });
   document.querySelectorAll('[data-holdsave]').forEach((b) => {
     b.onclick = () => {
       const id = b.dataset.holdsave;
       document.querySelectorAll(`[data-hold="${id}"]`).forEach((input) => {
         const h = state.data.investment.holdings.find((x) => x.name === input.dataset.hname);
-        if (h) h.value = Number(input.value) || 0;
+        if (!h) return;
+        h.value = Number(input.value) || 0;
+        if (h.kind === 'fx') {
+          const usd = Number(document.querySelector(`[data-fxusd="${CSS.escape(h.name)}"]`)?.value || 0);
+          if (usd) { h.usd = usd; h.rate = Math.round((h.value / usd) * 100) / 100; }
+          if (usd) h.name = h.name.replace(/\([\d,.]+\s*USD\)/, `(${usd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD)`);
+        }
       });
       state.data.investment.valuationDate = today();
-      mark(id, '평가금액 갱신');
+      // 이번 달 원금 변동 → 투자 원금 기록
+      const it2 = M.checklist().find((x) => x.id === id);
+      const group = it2?.group || 'jeonbuk';
+      const inAmt = Math.round(Number(document.querySelector(`[data-flowin="${id}"]`)?.value || 0) * 10000);
+      const outAmt = Math.round(Number(document.querySelector(`[data-flowout="${id}"]`)?.value || 0) * 10000);
+      const flows = state.data.investment.flows ||= [];
+      const memo = `${month} 월말 정리 입력`;
+      // 같은 달에 다시 저장하면 앞에 적은 값을 바꾼다 (두 번 더해지지 않게)
+      state.data.investment.flows = flows.filter((f) => !(f.memo === memo && f.group === group));
+      if (inAmt) state.data.investment.flows.push({ date: today(), amount: inAmt, group, include: true, memo, note: '넣은 돈' });
+      if (outAmt) state.data.investment.flows.push({ date: today(), amount: -outAmt, group, include: true, memo, note: '뺀 돈' });
+      mark(id, inAmt || outAmt ? `평가금액 갱신 · 원금 ${inAmt - outAmt >= 0 ? '+' : ''}${M.manwon(inAmt - outAmt)}원` : '평가금액 갱신');
       toast('평가금액을 저장했습니다. 투자 탭에 바로 반영됩니다.');
       render();
     };
@@ -1383,6 +1549,28 @@ export function settings() {
   </div>
 
   <div class="card">
+    <div class="card-head"><h2>저축·투자 자동 연결</h2><span class="muted">기본은 꺼짐</span></div>
+    <p class="muted">꺼두면: 청약·연금저축 같은 잔액은 <b>월말 정리에서 직접 입력</b>합니다. 이체를 멈추거나 금액을 바꿔도 신경 쓸 게 없습니다.
+      파일을 올리면 저축·투자로 나간 돈은 어느 쪽이든 소비에서 빠집니다.</p>
+    <p class="muted">켜두면: 통장 파일을 올릴 때 '저축·투자로 보이는 돈' 목록이 뜨고, 고른 것만 자산에 더합니다. 아래 규칙으로 미리 골라둡니다.</p>
+    <label class="field" style="margin-top:8px">업로드할 때 연결 제안
+      <select id="linkSuggest" ${editable() ? '' : 'disabled'}>
+        <option value="off" ${state.data.linkSuggest ? '' : 'selected'}>끄기 — 잔액은 월말에 직접 입력 (권장)</option>
+        <option value="on" ${state.data.linkSuggest ? 'selected' : ''}>켜기 — 올릴 때 확인하고 연결</option>
+      </select></label>
+    ${state.data.linkSuggest ? `<div class="table-wrap"><table>
+      <thead><tr><th>이름</th><th>적요 조건</th><th>대상 자산</th><th>사용</th>${editable() ? '<th></th>' : ''}</tr></thead>
+      <tbody>${autoLinks().map((r, i) => `<tr data-rule="${i}">
+        <td style="white-space:normal">${esc(r.name)}</td>
+        <td class="muted" style="white-space:normal">${esc([r.match ? `"${r.match}" 포함` : '', r.userName ? '가족 이름' : '', r.amount ? `${Number(r.amount).toLocaleString('ko-KR')}원` : ''].filter(Boolean).join(' · '))}</td>
+        <td>${esc(r.asset)}</td>
+        <td>${editable() ? `<input type="checkbox" data-ruleon ${r.on !== false ? 'checked' : ''}>` : (r.on !== false ? '○' : '<span class="muted">꺼짐</span>')}</td>
+        ${editable() ? '<td><button class="btn btn-quiet" data-ruledel>✕</button></td>' : ''}
+      </tr>`).join('')}</tbody></table></div>
+    ${editable() ? '<p class="muted" style="margin-top:8px">규칙이 안 맞아도 이체는 확인 목록에 나오니, 거기서 고르면 됩니다.</p>' : ''}` : ''}
+  </div>
+
+  <div class="card">
     <div class="card-head"><h2>계좌·카드</h2>
       ${editable() ? '<button class="btn" id="addAccount">+ 추가</button>' : ''}</div>
     <p class="muted">식별번호는 파일에 적힌 카드·계좌 번호의 일부입니다. 이 번호로 <b>누구 것인지 자동 구분</b>합니다.
@@ -1425,7 +1613,7 @@ function mountSettings() {
     g('gdPick').onclick = wrap(async () => {
       const f = await gd.pickFile();
       if (!f) return;
-      const r = await gd.pull({ merge });
+      const r = await gd.pull({ merge, interactive: true });
       toast(`${f.name} 연결됨. 새 거래 ${r.added || 0}건 받았습니다.`);
     });
     const createIn = (withFolder) => wrap(async () => {
@@ -1448,11 +1636,11 @@ function mountSettings() {
     if (g('gdCreate')) g('gdCreate').onclick = createIn(true);
     if (g('gdCreateRoot')) g('gdCreateRoot').onclick = createIn(false);
     if (g('gdPull')) g('gdPull').onclick = wrap(async () => {
-      const r = await gd.pull({ merge });
+      const r = await gd.pull({ merge, interactive: true });
       toast(r.added ? `새 거래 ${r.added}건을 받았습니다.` : '이미 최신입니다.');
     });
     if (g('gdPush')) g('gdPush').onclick = wrap(async () => {
-      await gd.push({ merge });
+      await gd.push({ merge, interactive: true });
       toast('드라이브에 저장했습니다.');
     });
     if (g('gdForget')) g('gdForget').onclick = wrap(async () => {
@@ -1536,6 +1724,21 @@ function mountSettings() {
       render();
     } catch (err) { toast(err.message); }
   };
+  const ls = document.getElementById('linkSuggest');
+  if (ls) ls.onchange = () => { state.data.linkSuggest = ls.value === 'on'; touch(); render(); };
+
+  document.querySelectorAll('[data-rule]').forEach((tr) => {
+    const i = Number(tr.dataset.rule);
+    const own = () => { if (!state.data.autoLinks?.length) state.data.autoLinks = DEFAULT_AUTOLINKS.map((r) => ({ ...r })); return state.data.autoLinks; };
+    const on = tr.querySelector('[data-ruleon]');
+    if (on) on.onchange = () => { own()[i].on = on.checked; touch(); };
+    const del = tr.querySelector('[data-ruledel]');
+    if (del) del.onclick = () => {
+      if (!confirm('이 규칙을 지울까요?')) return;
+      own().splice(i, 1); touch(); render();
+    };
+  });
+
   const simpleSel = document.getElementById('uiSimple');
   if (simpleSel) {
     simpleSel.onchange = (e) => {
