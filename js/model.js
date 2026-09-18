@@ -34,12 +34,16 @@ export function userName(id) { return state.data.users.find((u) => u.id === id)?
 
 /** 키워드 규칙으로 카테고리 추정 */
 export function guessCategory(merchant) {
+  // 순서가 중요하다: 예) '타이어'(자동차)가 '타이'(식당)보다 먼저
   const order = ['tax', 'car_charge', 'car_buy', 'car_run', 'insurance', 'telecom', 'subscription',
-    'housing', 'transit', 'leisure', 'travel', 'kids', 'medical', 'food_cafe', 'food_grocery',
+    'housing', 'transit', 'leisure', 'travel', 'kids', 'medical', 'beauty', 'food_cafe', 'food_grocery',
     'food_dining', 'shopping', 'dues', 'pay_unknown', 'card_unknown'];
-  for (const id of order) {
+  const rest = categories().map((c) => c.id).filter((id) => !order.includes(id) && id !== 'etc');
+  for (const id of [...order, ...rest]) {
     const c = categoryById(id);
-    if (c?.keywords && new RegExp(c.keywords).test(merchant)) return id;
+    try {
+      if (c?.keywords && new RegExp(c.keywords).test(merchant)) return id;
+    } catch { /* 설정에서 키워드를 잘못 적은 경우 건너뛴다 */ }
   }
   return 'etc';
 }

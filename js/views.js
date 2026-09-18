@@ -389,7 +389,7 @@ function entryForm(date) {
       <h2 style="margin:0">${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})</h2>
       <span class="muted">${M.won(spend)}</span>
     </div>
-    <label class="field">내용 (가맹점·적요)<input id="eName" placeholder="예: 한살림 철산매장" autocomplete="off"></label>
+    <label class="field">내용 (가맹점·적요)<input id="eName" placeholder="예: 동네마트" autocomplete="off"></label>
     <div class="row-2">
       <label class="field">금액<input id="eAmt" type="number" inputmode="numeric" placeholder="예: 34500"></label>
       <label class="field">카테고리<select id="eCat">${catOptions('food_grocery')}</select></label>
@@ -786,12 +786,15 @@ export function monthlyView() {
       const hs = (state.data.investment?.holdings || []).filter((h) => (h.group || 'jeonbuk') === (it.group || 'jeonbuk'));
       const fxInfo = M.investSummary().fx;
       body = hs.length ? `<div class="table-wrap"><table><tbody>${hs.map((h) => (h.kind === 'fx' ? `<tr>
-          <td style="white-space:normal">${esc(h.name.replace(/\s*\([\d,.]+\s*USD\)/, ''))}
-            <div class="muted" data-fxinfo="${esc(h.name)}" data-fxprin="${fxInfo?.principal || 0}">${fxRateText(h.usd ?? usdOf(h), h.value, fxInfo?.principal)}</div></td>
-          <td class="num"><div class="fx-grid">
-            <label>달러<input type="number" inputmode="decimal" step="0.01" data-fxusd="${esc(h.name)}" value="${h.usd ?? usdOf(h) ?? ''}" placeholder="7242.31"></label>
-            <label>원화<input type="number" inputmode="numeric" data-fxkrw-in="${esc(h.name)}" value="${h.value || ''}" placeholder="10016114"></label>
-          </div>
+          <td colspan="2" style="white-space:normal">
+            <div>${esc(h.name.replace(/\s*\([\d,.]+\s*USD\)/, ''))}</div>
+            <div class="fx-grid">
+              <label class="fx-field"><span>달러 잔액</span>
+                <input type="number" inputmode="decimal" step="0.01" data-fxusd="${esc(h.name)}" value="${h.usd ?? usdOf(h) ?? ''}" placeholder="7242.31"></label>
+              <label class="fx-field"><span>원화 환산 잔액</span>
+                <input type="number" inputmode="numeric" data-fxkrw-in="${esc(h.name)}" value="${h.value || ''}" placeholder="10016114"></label>
+            </div>
+            <div class="muted" data-fxinfo="${esc(h.name)}" data-fxprin="${fxInfo?.principal || 0}">${fxRateText(h.usd ?? usdOf(h), h.value, fxInfo?.principal)}</div>
             <input type="hidden" data-hold="${it.id}" data-hname="${esc(h.name)}" value="${h.value}"></td>
         </tr>` : `<tr>
           <td style="white-space:normal">${esc(h.name)}</td>

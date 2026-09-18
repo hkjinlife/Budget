@@ -5,6 +5,154 @@ const LS_UI = 'budget.ui.v1';
 const IDB_DB = 'budget-app';
 const IDB_STORE = 'handles';
 
+// 새로 시작하는 가족을 위한 기본 카테고리와 자동분류 키워드
+export const DEFAULT_CATEGORIES = [
+ {
+  "id": "loan_interest",
+  "name": "대출이자",
+  "major": "고정비",
+  "keywords": "대출이자"
+ },
+ {
+  "id": "insurance",
+  "name": "보험",
+  "major": "고정비",
+  "keywords": "손해보험|화재|METLIFE|삼성생명|DB손보|현대해상환급|메리츠|예별"
+ },
+ {
+  "id": "telecom",
+  "name": "통신비",
+  "major": "고정비",
+  "keywords": "SKT|SK브로드밴드|우주패스"
+ },
+ {
+  "id": "subscription",
+  "name": "정기구독·디지털",
+  "major": "고정비",
+  "keywords": "ANTHROPIC|MICROSOFT|DROPBOX|구글플레이|A1891|애플코리아|와우멤버십|코스트코연회비|LG전자구독료|한국교육방송|엘지전자_CNSPay|Disney|디즈니|넷플릭스|NETFLIX|유튜브|YOUTUBE|구글페이먼트|한글과컴퓨터|한컴|CLEVERBRIDGE|쿠팡플레이|티빙|웨이브|왓챠|멜론|스포티파이|SPOTIFY|APPLE\\.COM|ICLOUD|OPENAI|CHATGPT|NOTION|ADOBE"
+ },
+ {
+  "id": "housing",
+  "name": "주거·관리비",
+  "major": "고정비",
+  "keywords": "아파트관리비|도시가스"
+ },
+ {
+  "id": "food_grocery",
+  "name": "식비-장보기",
+  "major": "변동비",
+  "keywords": "한살림|더프레시|코스트코코리아|코스트코_온라인|공판장|푸메|푸드마켓|미가마트|축산|정육|하나로|이마트|홈플러스|롯데마트|과일|야채|채소|반찬|수산|농산|식자재|오아시스마켓|마켓컬리|컬리"
+ },
+ {
+  "id": "food_dining",
+  "name": "식비-외식·배달",
+  "major": "변동비",
+  "keywords": "쿠팡이츠|파파존스|김밥|순대|마라탕|현대옥|양와당|서향|여의나룻|섹타나인|캘리포니아|웰스토리|휴게소|돌구이|숯불|구이|갈비|삼겹|고기|국밥|해장|냉면|막국수|칼국수|짬뽕|짜장|반점|초밥|스시|라멘|우동|돈까스|돈가스|카레|치킨|피자|버거|떡볶이|분식|족발|보쌈|곱창|막창|샤브|쌀국수|타이|파스타|레스토랑|식당|포차|맥주|이자카야|덮밥|솥|돼지집|한우|회센터|횟집|아라도|피카소|푸드솔루션|배민|배달의민족|요기요|국수|샐러디|맥도날드|써브웨이|풀무원푸드|롯데리아|KFC|맘스터치|버거킹|본죽|죽이야기|한솥|도시락|푸드코트|푸드앤컬처"
+ },
+ {
+  "id": "food_cafe",
+  "name": "식비-카페·간식·편의점",
+  "major": "변동비",
+  "keywords": "로스터리|카페|커피|베이커리|제빵소|파티세리|빵|꽈배기|아마스빈|매머드|메가엠지씨|컴포즈|스타벅스|테라로사|파리바게뜨|배스킨|GS25|CU|씨유|세븐일레븐|미츠비|아티제|보나비아|스프링가든|쿠키|도넛|케이크|디저트|할리스|투썸|이디야|빽다방|폴바셋|커피빈|블루보틀|제과|과자|공차|오가다|망고식스|떡방|브레드|설빙|던킨|크리스피"
+ },
+ {
+  "id": "car_charge",
+  "name": "자동차-충전비",
+  "major": "변동비",
+  "keywords": "충전|볼트업|채비|파워큐브|이지차저|차저|에버온|차지비|환경부"
+ },
+ {
+  "id": "car_run",
+  "name": "자동차-주유·통행료·주차",
+  "major": "변동비",
+  "keywords": "주유소|도로|하이웨이|주차|이도밸류|타이어|카센터|정비|세차|오토오아시스|스피드메이트|블루핸즈|주차장"
+ },
+ {
+  "id": "transit",
+  "name": "교통-대중교통·택시",
+  "major": "변동비",
+  "keywords": "택시|철도|버스|티머니|카카오모빌리티|코레일|SRT|에스알|고속버스|시외버스"
+ },
+ {
+  "id": "shopping",
+  "name": "생활용품·쇼핑",
+  "major": "변동비",
+  "keywords": "쿠팡|네이버페이$|다이소|올리브영|이케아|무인양품|더현대|현대백화점|롯데몰|신세계|유원티앤지|뷰티원|다이아몬드|가우플랜|KIS|쌤소나이트|에이치앤앰|H&M|유니클로|자라|ZARA|마리오쇼핑|알리바바|ALIBABA|ALIEXPRESS|알리익스프레스|테무|TEMU|무신사|지그재그|에이블리|29CM|오늘의집|경동나비엔|앳홈|헤리티지|비앤앤|그린리본|에이폴|아울렛|백화점|면세"
+ },
+ {
+  "id": "medical",
+  "name": "의료·약국",
+  "major": "변동비",
+  "keywords": "병원|의원|약국|의료기|치과|소아과|내과|외과|안과|피부과|이비인후과|한의원|의료|메디|클리닉"
+ },
+ {
+  "id": "kids",
+  "name": "육아·교육",
+  "major": "변동비",
+  "keywords": "식판|어린이집|유치원|학원|월드패밀리|잉글리쉬|키즈|아동|유아|학습지|튼튼영어|눈높이|구몬|장난감|토이"
+ },
+ {
+  "id": "leisure",
+  "name": "여가·문화",
+  "major": "변동비",
+  "keywords": "서울랜드|시네마|교보문고|도서공연|노래|오락실|문화비|컬처닷컴|서적|문고|책방|몬스터파크|문화예술|공연|티켓|국가유산|박물관|미술관|키즈카페|수영|헬스|필라테스|요가|볼링|골프|아트센터|놀이터|전시|동물원|아쿠아리움"
+ },
+ {
+  "id": "travel",
+  "name": "여행",
+  "major": "변동비",
+  "keywords": "제주항공|드림투어|에스엠지티|항공|호텔|HOTEL|아고다|AGODA|BOOKING|부킹|에어비앤비|AIRBNB|대한항공|아시아나|진에어|티웨이|에어부산|제주국제자유도시|여기어때|야놀자|리조트|펜션"
+ },
+ {
+  "id": "tax",
+  "name": "세금·공과금",
+  "major": "변동비",
+  "keywords": "지자체세입금|정부24|세외수입|세금납부|유성구|경찰청"
+ },
+ {
+  "id": "dues",
+  "name": "회비·기부",
+  "major": "변동비",
+  "keywords": "학회"
+ },
+ {
+  "id": "pay_unknown",
+  "name": "간편결제(상세없음)",
+  "major": "변동비",
+  "keywords": "카카오페이|지역화폐"
+ },
+ {
+  "id": "card_unknown",
+  "name": "카드결제(상세없음)",
+  "major": "변동비",
+  "keywords": "^삼성카드$"
+ },
+ {
+  "id": "beauty",
+  "name": "미용",
+  "major": "변동비",
+  "keywords": "헤어|미용|네일|바버|맨즈룸|왁싱|피부관리|에스테틱"
+ },
+ {
+  "id": "etc",
+  "name": "기타",
+  "major": "변동비",
+  "keywords": ""
+ },
+ {
+  "id": "car_buy",
+  "name": "차량구매",
+  "major": "일회성",
+  "keywords": "아주오토|볼보|테슬라"
+ },
+ {
+  "id": "tax_big",
+  "name": "세금(대형·일회성)",
+  "major": "일회성",
+  "keywords": ""
+ }
+];
+
 export const state = {
   data: null,
   fileHandle: null,
@@ -83,7 +231,7 @@ export async function boot() {
 function emptyData() {
   return {
     version: 1, users: [{ id: 'user1', name: '남편' }, { id: 'user2', name: '아내' }],
-    accounts: [], categories: [], transactions: [],
+    accounts: [], categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })), transactions: [],
     investment: { flows: [], holdings: [], jeonbukLedger: [], valuationDate: today() },
     otherAssets: [], budgets: {}, notes: [], feedback: [], onboarded: false,
   };
