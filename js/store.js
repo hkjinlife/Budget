@@ -192,24 +192,60 @@ export async function exportFile() {
   return 'download';
 }
 
-export async function importFile(file) {
+export async function importFile(file, { mode = 'merge' } = {}) {
   const text = await file.text();
-  const d = JSON.parse(text);
-  if (!d.transactions) throw new Error('가계부 데이터 파일이 아닙니다.');
-  // 지금 보고 있는 데이터가 더 최신이면 덮어쓰기 전에 물어본다 (부부가 번갈아 쓸 때 사고 방지)
-  const mine = state.data?.updatedAt;
-  const theirs = d.updatedAt;
-  if (mine && theirs && theirs < mine) {
-    const ok = confirm(`불러오려는 파일이 더 오래된 것 같습니다.\n\n`
-      + `지금 화면: ${mine} (거래 ${state.data.transactions.length}건)\n`
-      + `불러올 파일: ${theirs} (거래 ${d.transactions.length}건)\n\n`
-      + `그래도 불러올까요? 지금 화면의 내용은 사라집니다.`);
-    if (!ok) throw new Error('불러오기를 취소했습니다.');
+  const incoming = JSON.parse(text);
+  if (!incoming.transactions) throw new Error('가계부 데이터 파일이 아닙니다.');
+
+  if (mode === 'replace' || !state.data?.transactions?.length) {
+    state.data = incoming;
+    normalize(state.data);
+    touch();
+    return { mode: 'replace', total: incoming.transactions.length, added: 0, updated: 0 };
   }
-  state.data = d;
-  normalize(state.data);
+
+  // 합치기: 양쪽에만 있는 거래를 모두 살린다
+  const mine = state.data;
+  const newer = (incoming.updatedAt || '') > (mine.updatedAt || '');
+  const byId = new Map(mine.transactions.map((t) => [t.id, t]));
+  const byKey = new Map(mine.transactions.map((t) => [dedupKey(t), t]));
+  let added = 0;
+  let updated = 0;
+  incoming.transactions.forEach((t) => {
+    const same = byId.get(t.id) || byKey.get(dedupKey(t));
+    if (!same) {
+      mine.transactions.push(t);
+      byId.set(t.id, t);
+      byKey.set(dedupKey(t), t);
+      added += 1;
+      return;
+    }
+    // 같은 거래라면 더 최근에 저장된 쪽의 분류·메모를 따른다
+    if (newer && (same.categoryId !== t.categoryId || same.type !== t.type
+      || same.excluded !== t.excluded || same.memo !== t.memo)) {
+      Object.assign(same, { categoryId: t.categoryId, type: t.type, excluded: t.excluded, memo: t.memo });
+      updated += 1;
+    }
+  });
+  mine.transactions.sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+
+  // 피드백도 합친다
+  const fbIds = new Set((mine.feedback || []).map((f) => f.id));
+  (incoming.feedback || []).forEach((f) => {
+    if (!fbIds.has(f.id)) { mine.feedback.unshift(f); fbIds.add(f.id); }
+  });
+  mine.feedback.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  // 설정(계좌·카테고리·대출·투자·사용자)은 더 최근에 저장된 파일 것을 쓴다
+  if (newer) {
+    ['users', 'accounts', 'categories', 'loans', 'otherAssets', 'budgets'].forEach((k) => {
+      if (incoming[k]) mine[k] = incoming[k];
+    });
+    if (incoming.investment) mine.investment = incoming.investment;
+  }
+  normalize(mine);
   touch();
-  return d.transactions.length;
+  return { mode: 'merge', total: mine.transactions.length, added, updated, newer };
 }
 
 /* ---------- 거래 추가/수정 ---------- */

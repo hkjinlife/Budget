@@ -46,8 +46,8 @@ export function welcome() {
 function mountWelcome() {
   document.getElementById('welcomeImport').onchange = async (e) => {
     try {
-      const n = await importFile(e.target.files[0]);
-      toast(`${n}건 불러왔습니다.`);
+      const r = await importFile(e.target.files[0]);
+      toast(`${r.total}건 불러왔습니다.`);
       render();
     } catch (err) { toast(err.message); }
   };
@@ -903,8 +903,10 @@ export function settings() {
       ${canUseFileSystem ? `<button class="btn btn-primary" id="btnConnect">공유 폴더 파일 연결</button>
         <button class="btn" id="btnCreate">새 파일 만들기</button>` : ''}
       <button class="btn" id="btnExport">파일 내보내기</button>
-      <label class="btn" style="display:inline-block">파일 가져오기
+      <label class="btn" style="display:inline-block">파일 가져와 합치기
         <input type="file" id="fileImport" accept=".json" hidden></label>
+      <label class="btn" style="display:inline-block">통째로 바꾸기
+        <input type="file" id="fileReplace" accept=".json" hidden></label>
     </div>
     <p class="muted" style="margin-top:10px">
       ${canUseFileSystem
@@ -1031,8 +1033,20 @@ function mountSettings() {
   };
   g('fileImport').onchange = async (e) => {
     try {
-      const n = await importFile(e.target.files[0]);
-      toast(`${n}건 불러왔습니다.`);
+      const r = await importFile(e.target.files[0]);
+      toast(r.added || r.updated
+        ? `합쳤습니다. 새 거래 ${r.added}건${r.updated ? `, 분류 수정 ${r.updated}건` : ''} (전체 ${r.total}건)`
+        : `새로 들어온 거래가 없습니다. (전체 ${r.total}건)`);
+      render();
+    } catch (err) { toast(err.message); }
+  };
+  g('fileReplace').onchange = async (e) => {
+    if (!confirm('지금 기기에 있는 내용을 버리고 파일 내용으로 통째로 바꿉니다.\n계속할까요?')) {
+      e.target.value = ''; return;
+    }
+    try {
+      const r = await importFile(e.target.files[0], { mode: 'replace' });
+      toast(`${r.total}건으로 바꿨습니다.`);
       render();
     } catch (err) { toast(err.message); }
   };
