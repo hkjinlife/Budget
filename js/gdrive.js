@@ -297,6 +297,3 @@ export async function push({ merge, force = false, interactive = true } = {}) {
   }
 }
 
-export function isReady() {
-  return isConfigured() && !!drive.fileId && !!drive.token && Date.now() < drive.tokenExpiry;
-}

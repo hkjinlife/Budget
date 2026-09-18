@@ -210,4 +210,3 @@ export function loanChart(canvas, series) {
   return c;
 }
 
-export function destroyAll() { [...charts.keys()].forEach(destroy); }

@@ -1,8 +1,8 @@
 // 화면 렌더링. 각 함수는 HTML 문자열을 만들고, mount()에서 이벤트를 붙인다.
-import { state, touch, markEdited, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
+import { state, touch, markEdited, mergeGifts, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
 import * as M from './model.js';
 import { monthlyChart, categoryChart, investChart, loanChart } from './charts.js';
-import { parseFile, reconcile, applyInvestFlows, suggestLinks, commitLinks, autoLinks, DEFAULT_AUTOLINKS } from './importers.js';
+import { parseFile, parseGiftReturn, reconcile, applyInvestFlows, suggestLinks, commitLinks, autoLinks, DEFAULT_AUTOLINKS } from './importers.js';
 import * as gd from './gdrive.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1261,6 +1261,291 @@ function mountInvest() {
   draw(); drawFlow();
 }
 
+/* ================= 증여 ================= */
+// 신고서 숫자를 그대로 보여주고, 새 증여는 예상 세액을 계산해 '예상'으로 넣는다. 신고한 뒤 신고서 숫자로 고친다.
+const nowStamp = () => new Date().toISOString().slice(0, 19);
+
+// 신고서 PDF 확인 결과 (탭을 다시 그려도 남도록 여기에 둔다)
+let giftChecks = [];
+const GIFT_FIELDS = [
+  ['증여재산가액', 'amount', 'amount'], ['증여재산가산액', 'addBack', 'addBack'], ['증여세 과세가액', 'taxable', 'taxable'],
+  ['직계존속 공제', 'deductDirect', 'deductDirect'], ['기타친족 공제', 'deductOther', 'deductOther'],
+  ['혼인·출산 공제', 'deductBirth', 'deductBirthTotal'], ['과세표준', 'base', 'base'], ['세율', 'rate', 'rate'],
+  ['산출세액', 'calcTax', 'calcTax'], ['기납부세액', 'prevTax', 'prevTax'], ['신고세액공제', 'credit', 'credit'],
+  ['자진납부할 세액', 'paid', 'paid'],
+];
+const sameGiftValue = (a, b, key) => (key === 'rate'
+  ? String(a || '').replace(/^-$/, '0%') === String(b || '').replace(/^-$/, '0%')
+  : (Number(a) || 0) === (Number(b) || 0));
+
+/** 신고서와 맞는 증여 내역 찾기: 증여일 → 받은 사람·준 사람 성(姓) → 금액 */
+function matchGiftReturn(r) {
+  const recvIds = state.data.users.filter((u) => (u.name || '')[0] === r.receiverInitial).map((u) => u.id);
+  let c = M.giftList().filter((g) => g.date === r.date);
+  if (recvIds.length) c = c.filter((g) => recvIds.includes(g.receiver));
+  if (r.giverInitial) { const c2 = c.filter((g) => (g.giver || '')[0] === r.giverInitial); if (c2.length) c = c2; }
+  if (c.length > 1 && r.amount != null) { const c3 = c.filter((g) => Number(g.amount) === r.amount); if (c3.length) c = c3; }
+  return { rec: c.length === 1 ? c[0] : null, many: c.length > 1, recvId: recvIds[0] || '' };
+}
+
+function renderGiftChecks() {
+  return giftChecks.map((ck, i) => {
+    if (ck.error) return `<div class="notice" style="margin-bottom:8px">${esc(ck.fileName)}: ${esc(ck.error)}</div>`;
+    const r = ck.parsed;
+    const m = matchGiftReturn(r);
+    const head = `<div class="card-head"><h2 style="font-size:15px">신고서 확인 · ${esc(r.date.replace(/-/g, '.'))}</h2>
+      <span class="muted">${esc(r.filing ? `${r.filing} 신고` : '')}${r.docNo ? ` · ${esc(r.docNo)}` : ''} · ${esc(ck.fileName)}</span></div>`;
+    if (!m.rec) {
+      return `<div class="card" style="background:var(--surface-2)">${head}
+        <p>${m.many ? '같은 날 비슷한 증여가 여러 건이라 어느 것인지 모르겠어요. 표에서 직접 고쳐 주세요.'
+    : `앱에 이 증여가 없어요. 증여재산가액 ${M.won(r.amount)} · 낸 세금 ${M.won(r.paid)}`}</p>
+        ${m.many ? '' : `<div class="btn-row"><button class="btn btn-primary" data-giftnew="${i}">새 증여로 넣기</button></div>`}</div>`;
+    }
+    const g = m.rec;
+    const diffs = GIFT_FIELDS.filter(([, a, b]) => r[b] != null && !sameGiftValue(g[a], r[b], a));
+    return `<div class="card" style="background:var(--surface-2)">${head}
+      <p class="muted">${esc(M.userName(g.receiver))} ← ${esc(g.giver)} (${esc(g.relation)}) ${g.status === '예상' ? '<span class="badge">예상</span>' : ''} 과 비교</p>
+      <div class="table-wrap"><table><thead><tr><th>항목</th><th class="num">앱</th><th class="num">신고서</th><th></th></tr></thead>
+      <tbody>${GIFT_FIELDS.filter(([, , b]) => r[b] != null).map(([label, a, b]) => {
+    const ok = sameGiftValue(g[a], r[b], a);
+    const fmt = (v) => (a === 'rate' ? esc(v || '-') : M.won(Number(v) || 0));
+    return `<tr><td>${label}</td><td class="num">${fmt(g[a])}</td><td class="num">${fmt(r[b])}</td>
+          <td>${ok ? '<span class="pos">✓</span>' : '<span class="neg">다름</span>'}</td></tr>`;
+  }).join('')}</tbody></table></div>
+      ${diffs.length || g.status === '예상'
+    ? `<div class="btn-row" style="margin-top:10px"><button class="btn btn-primary" data-giftapply="${i}">신고서 숫자로 고치기${diffs.length ? ` (${diffs.length}칸)` : ''}</button></div>`
+    : '<p class="pos" style="margin-top:8px">모두 신고서와 같아요 ✓</p>'}</div>`;
+  }).join('');
+}
+
+/** 신고서 숫자를 증여 내역에 넣는다 (상태는 '신고'로) */
+function applyGiftReturn(rec, r) {
+  Object.assign(rec, {
+    amount: r.amount ?? rec.amount, addBack: r.addBack ?? 0, taxable: r.taxable ?? 0,
+    deductDirect: r.deductDirect ?? 0, deductOther: r.deductOther ?? 0, deductBirth: r.deductBirthTotal ?? 0,
+    base: r.base ?? 0, rate: r.rate === '0%' ? '-' : (r.rate || rec.rate), calcTax: r.calcTax ?? 0, prevTax: r.prevTax ?? 0,
+    credit: r.credit ?? 0, paid: r.paid ?? 0, filing: r.filing || rec.filing, status: '신고', mt: nowStamp(),
+  });
+  if (r.docNo && !String(rec.note || '').includes(r.docNo)) rec.note = `${rec.note ? `${rec.note} / ` : ''}관리번호 ${r.docNo}`;
+}
+
+export function giftView() {
+  const who = state.ui.user || 'all';
+  const st = M.giftStatus(who);
+  const ed = editable();
+  const uname = (id) => M.userName(id);
+  const groupName = (o) => `${esc(uname(o.receiver))} ← ${esc(o.givers.join('·'))}${o.key.endsWith('|부모') && o.givers.length ? ' <span class="muted">(부모 합산)</span>' : ''}`;
+  const pctText = (r) => `${Math.round(r * 100)}%`;
+  const room = (o) => (o.bracket.room == null ? '-' : M.won(o.bracket.room));
+  const dedCell = (used, limit) => (used >= limit ? '<span class="neg">다 씀</span>'
+    : `${M.manwon(limit - used)}원 남음 <span class="muted">(${M.manwon(used)}원 씀)</span>`);
+  const rows = M.giftList().filter((g) => who === 'all' || g.receiver === who);
+
+  const empty = !st.count ? `<div class="card"><h2>아직 증여 내역이 없습니다</h2>
+    <p class="muted">위쪽 <b>편집</b>을 누르고 <b>+ 증여 추가</b>로 넣거나, 증여 파일(.json)을 불러오세요.</p></div>` : '';
+
+  return `
+  ${empty}
+  ${st.count ? `<div class="grid" style="margin-bottom:14px">
+    <div class="tile"><div class="label">받은 증여 합계</div><div class="value">${M.won(st.total)}</div>
+      <div class="sub">${st.count}건</div></div>
+    <div class="tile"><div class="label">낸 증여세 합계</div><div class="value">${M.won(st.paid)}</div>
+      <div class="sub">평균 실효세율 ${M.pct(st.rate)}</div></div>
+    ${st.receivers.length > 1 ? st.receivers.map((r) => `<div class="tile"><div class="label">${esc(uname(r.id))}</div>
+      <div class="value">${M.won(r.total)}</div><div class="sub">세금 ${M.won(r.paid)} · ${r.count}건 · ${M.pct(r.rate)}</div></div>`).join('') : ''}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>지금 세금 현황</h2><span class="muted">${new Date().toISOString().slice(0, 10)} 기준 · 10년 합산</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>받은 사람 ← 준 사람</th><th class="num">10년 합산 증여</th><th class="num">지금 과세표준</th>
+        <th class="num">다음 증여 세율</th><th class="num">이 세율로 더 받을 수 있는 돈</th><th class="num">다음 신고 기납부세액</th><th>다음 합산 제외</th></tr></thead>
+      <tbody>${st.groups.map((o) => `<tr>
+        <td style="white-space:normal;min-width:160px">${groupName(o)}${o.estimated ? ' <span class="badge">예상 포함</span>' : ''}</td>
+        <td class="num">${M.won(o.window)}</td>
+        <td class="num">${M.won(o.base)}</td>
+        <td class="num">${pctText(o.bracket.rate)}</td>
+        <td class="num">${room(o)}</td>
+        <td class="num">${M.won(o.prevTax)}</td>
+        <td>${o.nextDrop ? `${esc(o.nextDrop.date.replace(/-/g, '.'))} <span class="muted">${M.manwon(o.nextDrop.amount)}원</span>` : '-'}</td></tr>
+        ${o.changedWindow ? `<tr><td colspan="7" class="muted" style="white-space:normal">↳ 마지막 신고 뒤로 10년이 지나 합산에서 빠진 증여가 있어요. 다음 신고 때 과세표준이 달라질 수 있으니 세무사와 확인하세요.</td></tr>` : ''}`).join('')}
+      </tbody></table></div>
+    <p class="muted" style="margin-top:8px">다음 증여 세율 = 지금 과세표준 위에 더 받을 때 붙는 세율. 더 받을 수 있는 돈 = 그 세율 구간의 끝(예: 과세표준 5억)까지 남은 금액이고, 넘는 부분에는 다음 세율이 붙습니다.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>공제 현황</h2><span class="muted">받은 사람 기준</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>받은 사람</th><th>부모(직계) · 10년 5천만</th><th>혼인·출산 · 평생 1억</th><th>기타친족 · 10년 1천만</th></tr></thead>
+      <tbody>${st.receivers.map((r) => `<tr><td>${esc(uname(r.id))}</td>
+        <td>${dedCell(r.direct, M.GIFT_RULES.limits.direct)}</td>
+        <td>${dedCell(r.birth, M.GIFT_RULES.limits.birth)}</td>
+        <td>${dedCell(r.other, M.GIFT_RULES.limits.other)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="muted" style="margin-top:8px">공제를 다 쓰면 앞으로 받는 돈은 그대로 과세표준에 더해집니다. 미성년자는 부모 공제가 2천만원입니다.</p>
+  </div>` : ''}
+
+  ${ed ? `<div class="card" id="giftAdd">
+    <div class="card-head"><h2>+ 증여 추가</h2><span class="muted">예상 세액으로 넣고, 신고한 뒤 신고서 숫자로 고칩니다</span></div>
+    <div class="row-2">
+      <label class="field">증여일<input type="date" id="gDate" value="${today()}"></label>
+      <label class="field">받은 사람<select id="gRecv">${state.data.users.map((u) => `<option value="${u.id}" ${u.id === who ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+      <label class="field">준 사람<input id="gGiver" placeholder="이름"></label>
+      <label class="field">관계 (받은 사람 쪽에서)<select id="gRel">${M.GIFT_RELATIONS.map((r) => `<option>${r}</option>`).join('')}</select></label>
+      <label class="field">유형<input id="gType" value="현금"></label>
+      <label class="field">증여재산가액 (원)<input id="gAmt" type="number" inputmode="numeric" placeholder="예: 100000000"></label>
+    </div>
+    <div class="notice" id="gEst" style="margin-top:10px">금액을 넣으면 예상 세액이 나옵니다.</div>
+    <div class="btn-row" style="margin-top:10px"><button class="btn btn-primary" id="gSave">예상으로 추가</button></div>
+  </div>` : ''}
+
+  <details class="card fold" id="giftFold" ${state.ui.giftsOpen === false ? '' : 'open'}>
+    <summary><h2>증여 내역</h2><span class="muted">${rows.length}건</span></summary>
+    <div class="btn-row" style="margin-bottom:8px">
+      <label class="btn">신고서 PDF로 확인<input type="file" id="giftPdf" accept=".pdf,application/pdf" multiple hidden></label>
+      <label class="btn btn-quiet">증여 파일 불러오기 (.json)<input type="file" id="giftFile" accept=".json,application/json" hidden></label>
+    </div>
+    <div id="giftCheck">${renderGiftChecks()}</div>
+    ${ed ? '' : lockNote('증여 내역')}
+    <div class="table-wrap"><table>
+      <thead><tr><th>증여일</th><th>받은 사람</th><th>준 사람</th><th>유형</th><th class="num">증여재산가액</th>
+        <th class="num">과세표준</th><th class="num">산출세액</th><th class="num">낸 세금</th><th>상태</th><th>메모</th>${ed ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map((g) => (ed ? `<tr data-gift="${esc(g.id)}">
+        <td><input data-f="date" type="date" value="${esc(g.date)}"></td>
+        <td>${esc(uname(g.receiver))}</td>
+        <td><input data-f="giver" value="${esc(g.giver)}" style="min-width:80px">
+          <select data-f="relation">${M.GIFT_RELATIONS.map((r) => `<option ${r === g.relation ? 'selected' : ''}>${r}</option>`).join('')}</select></td>
+        <td><input data-f="type" value="${esc(g.type || '')}" style="min-width:110px"></td>
+        <td class="num"><input data-f="amount" data-num type="number" value="${g.amount || 0}" style="min-width:120px;text-align:right"></td>
+        <td class="num"><input data-f="base" data-num type="number" value="${g.base || 0}" style="min-width:120px;text-align:right"></td>
+        <td class="num"><input data-f="calcTax" data-num type="number" value="${g.calcTax || 0}" style="min-width:110px;text-align:right"></td>
+        <td class="num"><input data-f="paid" data-num type="number" value="${g.paid || 0}" style="min-width:110px;text-align:right"></td>
+        <td><select data-f="status"><option ${g.status === '신고' ? 'selected' : ''}>신고</option><option ${g.status === '예상' ? 'selected' : ''}>예상</option></select></td>
+        <td><input data-f="note" value="${esc(g.note || '')}" style="min-width:160px"></td>
+        <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
+    : `<tr><td>${esc(g.date.replace(/-/g, '.'))}</td><td>${esc(uname(g.receiver))}</td>
+        <td>${esc(g.giver)} <span class="muted">(${esc(g.relation)})</span></td><td style="white-space:normal">${esc(g.type || '')}</td>
+        <td class="num">${M.won(g.amount)}</td><td class="num">${M.won(g.base)}</td><td class="num">${M.won(g.calcTax)}</td>
+        <td class="num">${M.won(g.paid)}</td>
+        <td>${g.status === '예상' ? '<span class="badge">예상</span>' : '신고'}</td>
+        <td style="white-space:normal;min-width:160px"><span class="muted">${esc(g.note || '')}</span></td></tr>`)).join('')}
+      </tbody></table></div>
+  </details>
+
+  <p class="muted">세무사가 아닌 참고용 계산입니다. 세율 1억 이하 10% · 5억 이하 20% · 10억 이하 30% · 30억 이하 40% · 그 이상 50%, 기한 내 신고세액공제 3%.
+    새 증여의 예상 세액은 같은 묶음의 마지막 신고 위에 더해지는 것으로 계산합니다(조부모는 세대생략 할증 30%). 최종 신고는 세무사와 확인하세요.</p>`;
+}
+
+function mountGift() {
+  const fold = document.getElementById('giftFold');
+  if (fold) fold.ontoggle = () => { state.ui.giftsOpen = fold.open; saveUIState(); };
+
+  // 신고서 PDF 확인 (여러 장 한 번에)
+  const pdfIn = document.getElementById('giftPdf');
+  if (pdfIn) pdfIn.onchange = async (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    document.getElementById('giftCheck').innerHTML = '<p class="muted">신고서를 읽는 중…</p>';
+    giftChecks = [];
+    for (const f of files) {
+      try {
+        const parsed = await parseGiftReturn(f);
+        giftChecks.push(parsed ? { fileName: f.name, parsed } : { fileName: f.name, error: '증여세 신고서(과세표준신고 및 자진납부계산서)가 아닌 것 같아요.' });
+      } catch (err) { giftChecks.push({ fileName: f.name, error: err.message }); }
+    }
+    state.ui.giftsOpen = true;
+    render();
+  };
+  document.querySelectorAll('[data-giftapply]').forEach((b) => {
+    b.onclick = () => {
+      const ck = giftChecks[Number(b.dataset.giftapply)];
+      const m = matchGiftReturn(ck.parsed);
+      if (!m.rec) return;
+      applyGiftReturn(m.rec, ck.parsed);
+      touch(); toast('신고서 숫자로 고쳤습니다.'); render();
+    };
+  });
+  document.querySelectorAll('[data-giftnew]').forEach((b) => {
+    b.onclick = () => {
+      const r = giftChecks[Number(b.dataset.giftnew)].parsed;
+      const rel = { 자: '부', 녀: '부', 사위: '장인', 자부: '시부', 며느리: '시부' }[r.relationText] || '기타친족';
+      const rec = { id: `g_${Date.now().toString(36)}`, date: r.date, receiver: matchGiftReturn(r).recvId || state.data.users[0].id,
+        giver: `${r.giverInitial || ''}**`, relation: rel, type: '현금', note: '신고서 PDF로 넣음 — 준 사람 이름·관계·유형을 확인하세요' };
+      applyGiftReturn(rec, r);
+      state.data.gifts ||= [];
+      state.data.gifts.push(rec);
+      touch(); toast('새 증여로 넣었습니다. 표에서 준 사람 이름과 관계를 확인해 주세요.'); render();
+    };
+  });
+
+  // 증여 파일 불러오기: {gifts:[...]} 또는 [...] 또는 가계부 파일 전체
+  const file = document.getElementById('giftFile');
+  if (file) file.onchange = async (e) => {
+    try {
+      const data = JSON.parse(await e.target.files[0].text());
+      const list = Array.isArray(data) ? data : data.gifts;
+      if (!Array.isArray(list)) throw new Error('증여 내역(gifts)이 들어 있는 파일이 아닙니다.');
+      const r = mergeGifts(list);
+      touch();
+      toast(r.added || r.updated ? `증여 내역: 새로 ${r.added}건, 바뀐 것 ${r.updated}건` : '새로 들어온 증여 내역이 없습니다.');
+      render();
+    } catch (err) { toast(err.message); }
+  };
+
+  if (!editable()) return;
+  const g = (id) => document.getElementById(id);
+  const read = () => ({
+    date: g('gDate').value, receiver: g('gRecv').value, giver: g('gGiver').value.trim(),
+    relation: g('gRel').value, type: g('gType').value.trim() || '현금', amount: Number(g('gAmt').value) || 0,
+  });
+  const showEst = () => {
+    const v = read();
+    if (!v.amount) { g('gEst').textContent = '금액을 넣으면 예상 세액이 나옵니다.'; return; }
+    const e2 = M.giftEstimate(v);
+    g('gEst').innerHTML = `예상: 과세표준 <b>${M.won(e2.base)}</b> · 세율 ${esc(e2.rate)} · 산출세액 ${M.won(e2.calcTax)}
+      − 기납부 ${M.won(e2.prevTax)} − 신고공제 ${M.won(e2.credit)} = <b>낼 세금 ${M.won(e2.paid)}</b>
+      ${e2.droppedSinceLast ? '<br>※ 10년이 지나 합산에서 빠지는 증여가 있어 실제 세액과 다를 수 있습니다.' : ''}`;
+  };
+  ['gDate', 'gRecv', 'gGiver', 'gRel', 'gAmt'].forEach((id) => g(id).addEventListener('input', showEst));
+  g('gRel').addEventListener('change', showEst);
+  g('gRecv').addEventListener('change', showEst);
+  g('gSave').onclick = () => {
+    const v = read();
+    if (!v.date || !v.giver || !v.amount) { toast('증여일, 준 사람, 금액을 넣어주세요.'); return; }
+    const e2 = M.giftEstimate(v);
+    state.data.gifts ||= [];
+    state.data.gifts.push({
+      id: `g_${Date.now().toString(36)}`, ...v, ...e2, filing: '', status: '예상',
+      note: '앱에서 계산한 예상. 신고 후 신고서 숫자로 고치세요', mt: nowStamp(),
+    });
+    delete state.data.gifts[state.data.gifts.length - 1].droppedSinceLast;
+    touch();
+    toast('예상 세액으로 넣었습니다. 신고한 뒤 숫자를 고치고 상태를 "신고"로 바꾸세요.');
+    render();
+  };
+
+  document.querySelectorAll('[data-gift]').forEach((tr) => {
+    const rec = (state.data.gifts || []).find((x) => x.id === tr.dataset.gift);
+    if (!rec) return;
+    tr.querySelectorAll('[data-f]').forEach((el) => {
+      const f = el.dataset.f;
+      if (f === 'del') {
+        el.onclick = () => {
+          if (!confirm(`${rec.date} ${rec.giver} ${M.won(rec.amount)} 증여를 지울까요?`)) return;
+          rec.deleted = true;          // 다른 기기에서도 지워지도록 표시만 남긴다
+          rec.mt = nowStamp();
+          touch(); render();
+        };
+        return;
+      }
+      el.onchange = () => {
+        rec[f] = el.hasAttribute('data-num') ? Number(el.value) || 0 : el.value;
+        rec.mt = nowStamp();
+        touch(); render();
+      };
+    });
+  });
+}
+
 /* ================= 대출 ================= */
 export function loanView() {
   const list = M.visibleLoans();
@@ -1614,7 +1899,7 @@ export function settings() {
     <div class="card-head"><h2>화면 구성</h2><span class="muted">이 기기에만 적용됩니다</span></div>
     <label class="field">보이는 탭
       <select id="uiSimple">
-        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (대시보드·가계부·투자·대출·리포트·거래내역·월말 정리·설정)</option>
+        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (대시보드·가계부·투자·대출·증여·리포트·거래내역·월말 정리·설정)</option>
         <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·가계부·거래내역·설정)</option>
       </select></label>
     <p class="muted">투자·대출·리포트·월말 정리를 안 쓰는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
@@ -1868,7 +2153,7 @@ function mountSettings() {
       state.ui.simple = e.target.value === 'simple';
       saveUIState();
       applyTabVisibility();
-      if (state.ui.simple && ['invest', 'loan', 'report', 'monthly'].includes(state.ui.view)) {
+      if (state.ui.simple && ['invest', 'loan', 'gift', 'report', 'monthly'].includes(state.ui.view)) {
         state.ui.view = 'dashboard';
       }
       render();
@@ -1972,6 +2257,7 @@ const VIEWS = {
   entry: [entry, mountEntry],
   invest: [invest, mountInvest],
   loan: [loanView, mountLoan],
+  gift: [giftView, mountGift],
   monthly: [monthlyView, mountMonthly],
   report: [reportView, mountReport],
   settings: [settings, mountSettings],
@@ -1988,7 +2274,7 @@ export function render() {
 
 /** 간단히 보기일 때 투자·대출·리포트 탭을 숨긴다 */
 export function applyTabVisibility() {
-  const hide = state.ui.simple ? ['invest', 'loan', 'report', 'monthly'] : [];
+  const hide = state.ui.simple ? ['invest', 'loan', 'gift', 'report', 'monthly'] : [];
   document.querySelectorAll('.tab').forEach((b) => {
     b.style.display = hide.includes(b.dataset.view) ? 'none' : '';
   });

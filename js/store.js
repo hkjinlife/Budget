@@ -254,6 +254,7 @@ function normalize(d) {
   d.budgets ||= {};
   d.monthly ||= {};
   d.otherAssets ||= [];
+  d.gifts ||= [];
   // 한 번만 있는 큰 지출(가전·수리 등)을 모으는 카테고리. 예전 데이터에도 넣어준다
   if (d.categories.length && !d.categories.some((c) => c.id === 'once_big')) {
     d.categories.push({ id: 'once_big', name: '일회성 큰 지출', major: '일회성', keywords: '' });
@@ -369,6 +370,22 @@ export async function importFile(file, { mode = 'merge' } = {}) {
   return applyIncoming(incoming, { mode, preferIncoming: true });
 }
 
+/** 증여 내역을 합친다 (앱끼리 합칠 때, 증여 파일을 올릴 때). 새로 들어오거나 바뀐 건수를 돌려준다 */
+export function mergeGifts(list, target = state.data) {
+  if (!Array.isArray(list)) return { added: 0, updated: 0 };
+  target.gifts ||= [];
+  const byId = new Map(target.gifts.map((g) => [g.id, g]));
+  let added = 0;
+  let updated = 0;
+  list.forEach((g) => {
+    if (!g || !g.id) return;
+    const cur = byId.get(g.id);
+    if (!cur) { target.gifts.push({ ...g }); byId.set(g.id, g); added += 1; return; }
+    if ((g.mt || '') > (cur.mt || '')) { Object.assign(cur, g); updated += 1; }
+  });
+  return { added, updated };
+}
+
 /** 거래 하나를 고쳤다고 표시한다. 합칠 때 거래마다 더 최근에 고친 쪽을 따른다 */
 export function markEdited(t) {
   t.mt = new Date().toISOString().slice(0, 19);
@@ -473,6 +490,9 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
       });
     });
   }
+
+  // 증여 내역: id로 합치고 같은 건은 더 나중에 고친 쪽(mt)을 따른다. 지운 건은 deleted 표시로 남아 다른 기기에서도 지워진다
+  mergeGifts(incoming.gifts, mine);
 
   // 카테고리·계좌는 id로 합친다 (새로 생긴 것, 더한 키워드·카드번호는 어느 쪽이든 살린다)
   mine.categories = mergeList(mine.categories, incoming.categories, newer, 'keywords');

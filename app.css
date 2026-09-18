@@ -252,3 +252,7 @@ details.fold[open] > summary { margin-bottom: 10px; }
 @media (max-width: 560px) {
   .grid.assets .tile:first-child { grid-column: 1 / -1; }   /* 폰에서는 '전체 자산'을 한 줄 전체로 */
 }
+
+/* '예상' 같은 작은 표시 */
+.badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--series-4); white-space: nowrap; }

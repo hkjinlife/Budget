@@ -1,7 +1,6 @@
 // 집계·분류 로직. 화면과 그래프는 모두 여기 함수를 쓴다.
 import { state } from './store.js';
 
-export const MAJORS = ['고정비', '변동비', '일회성'];
 
 export function won(n, { sign = false } = {}) {
   if (n == null || Number.isNaN(n)) return '-';
@@ -392,4 +391,135 @@ export function findAsset(item) {
   const assets = state.data.otherAssets || [];
   const re = item.match ? new RegExp(item.match) : null;
   return assets.find((a) => (re ? re.test(a.name) : a.name === item.name)) || null;
+}
+
+/* ---------- 증여 ---------- */
+// 세율·공제는 상속세 및 증여세법 기준(2026). 참고용 계산이며 최종 판단은 세무사 확인.
+export const GIFT_RULES = {
+  // [과세표준 상한, 세율, 누진공제]
+  brackets: [[1e8, 0.1, 0], [5e8, 0.2, 1e7], [1e9, 0.3, 6e7], [3e9, 0.4, 1.6e8], [Infinity, 0.5, 4.6e8]],
+  limits: { direct: 5e7, other: 1e7, birth: 1e8, spouse: 6e8 },   // 직계존속(10년), 기타친족(10년), 혼인·출산(평생), 배우자(10년)
+  creditRate: 0.03,                                                // 기한 내 신고세액공제
+};
+// 받은 사람 쪽에서 본 관계
+export const GIFT_RELATIONS = ['부', '모', '조부', '조모', '배우자', '장인', '장모', '시부', '시모', '기타친족'];
+const giftClass = (rel) => (['부', '모', '조부', '조모'].includes(rel) ? 'direct' : rel === '배우자' ? 'spouse' : 'other');
+
+/** 증여세 산출세액 (과세표준 → 세액) */
+export function giftTax(base) {
+  if (!(base > 0)) return 0;
+  const [, rate, ded] = GIFT_RULES.brackets.find(([upto]) => base <= upto);
+  return Math.round(base * rate - ded);
+}
+
+/** 지금 과세표준이 속한 세율 구간과, 그 구간에서 더 받을 수 있는 금액 */
+export function giftBracket(base) {
+  const b = Math.max(0, base || 0);
+  const i = GIFT_RULES.brackets.findIndex(([upto]) => b < upto);
+  const [upto, rate] = GIFT_RULES.brackets[i];
+  return { rate, upto, room: upto === Infinity ? null : upto - b };
+}
+
+export function giftList() {
+  return (state.data.gifts || []).filter((g) => !g.deleted).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** 10년 합산 묶음: 부모님(부·모)은 한 사람으로 본다(상증법 §47②). 조부모도 부부 합산. 그 밖에는 증여자별 */
+export function giftGroupKey(g) {
+  const who = ['부', '모'].includes(g.relation) ? '부모' : ['조부', '조모'].includes(g.relation) ? '조부모' : g.giver;
+  return `${g.receiver}|${who}`;
+}
+
+const addYears = (iso, n) => `${Number(iso.slice(0, 4)) + n}${iso.slice(4)}`;
+
+/** 증여 현황: 받은 사람별·합산 묶음별 누적, 지금 과세표준·세율 구간, 공제 사용 */
+export function giftStatus(receiver = 'all', asOf = new Date().toISOString().slice(0, 10)) {
+  const list = giftList().filter((g) => receiver === 'all' || g.receiver === receiver);
+  const from = addYears(asOf, -10);             // 이 날 이후 증여만 10년 합산에 들어간다
+  const groups = new Map();
+  list.forEach((g) => {
+    const k = giftGroupKey(g);
+    if (!groups.has(k)) groups.set(k, { key: k, receiver: g.receiver, givers: [], relation: g.relation, items: [] });
+    const gr = groups.get(k);
+    if (!gr.givers.includes(g.giver)) gr.givers.push(g.giver);
+    gr.items.push(g);
+  });
+  const order = (state.data.users || []).map((u) => u.id);
+  const out = [...groups.values()].sort((a, b) => order.indexOf(a.receiver) - order.indexOf(b.receiver)).map((gr) => {
+    const inWin = gr.items.filter((g) => g.date >= from);
+    const last = gr.items[gr.items.length - 1];                    // 가장 최근 신고(또는 예상)
+    const dropped = gr.items.filter((g) => g.date < from && g.date <= last.date);
+    const base = last.date >= from ? (Number(last.base) || 0) : 0;
+    const next = inWin[0];
+    return {
+      ...gr,
+      cls: giftClass(gr.relation),
+      total: gr.items.reduce((s, g) => s + (Number(g.amount) || 0), 0),
+      paid: gr.items.reduce((s, g) => s + (Number(g.paid) || 0), 0),
+      window: inWin.reduce((s, g) => s + (Number(g.amount) || 0), 0),
+      base,
+      prevTax: last.date >= from ? (Number(last.calcTax) || 0) : 0,  // 다음 증여 때 빼주는 기납부세액
+      bracket: giftBracket(base),
+      nextDrop: next ? { date: addYears(next.date, 10), amount: Number(next.amount) || 0 } : null,
+      changedWindow: dropped.length > 0 && last.date >= from,         // 마지막 신고 뒤로 합산에서 빠진 증여가 있음
+      estimated: gr.items.some((g) => g.status === '예상'),
+    };
+  });
+  // 받은 사람별 공제 사용 (직계·기타친족은 10년, 혼인·출산은 평생). 같은 묶음 안에서는 마지막 신고의 공제가 누적 기준
+  const recv = [...new Set(list.map((g) => g.receiver))].map((id) => {
+    const mine = out.filter((o) => o.receiver === id);
+    const lastOf = (o) => o.items[o.items.length - 1];
+    const used = (cls, field) => mine.filter((o) => o.cls === cls && lastOf(o).date >= from)
+      .reduce((s, o) => s + (Number(lastOf(o)[field]) || 0), 0);
+    const items = list.filter((g) => g.receiver === id);
+    const total = items.reduce((s, g) => s + (Number(g.amount) || 0), 0);
+    const paid = items.reduce((s, g) => s + (Number(g.paid) || 0), 0);
+    return {
+      id, total, paid, count: items.length, rate: total ? paid / total : 0,
+      direct: used('direct', 'deductDirect'),
+      other: used('other', 'deductOther'),
+      birth: Math.max(0, ...items.map((g) => Number(g.deductBirth) || 0)),
+    };
+  });
+  const total = list.reduce((s, g) => s + (Number(g.amount) || 0), 0);
+  const paid = list.reduce((s, g) => s + (Number(g.paid) || 0), 0);
+  return { groups: out, receivers: recv, total, paid, count: list.length, rate: total ? paid / total : 0 };
+}
+
+/** 새 증여의 예상 세액. 같은 묶음의 마지막 신고 위에 얹는다고 보고 계산한다 (합산 제외·공제 변화는 세무사 확인) */
+export function giftEstimate({ date, receiver, giver, relation, amount }) {
+  const g0 = { date, receiver, giver, relation };
+  const key = giftGroupKey(g0);
+  const prev = giftList().filter((g) => giftGroupKey(g) === key && g.date <= date);
+  const from = addYears(date, -10);
+  const last = prev.filter((g) => g.date >= from).pop();
+  const amt = Number(amount) || 0;
+  let base;
+  let ded = { deductDirect: 0, deductOther: 0, deductBirth: 0 };
+  if (last) {
+    // 공제는 이미 앞 신고에서 반영돼 있으므로 받은 금액이 그대로 과세표준에 더해진다
+    base = (Number(last.base) || 0) + amt;
+    ded = { deductDirect: last.deductDirect || 0, deductOther: last.deductOther || 0, deductBirth: last.deductBirth || 0 };
+  } else {
+    // 처음 받는 묶음: 같은 종류 공제 중 10년 안에 다른 사람에게서 쓴 만큼 빼고 남은 공제
+    const cls = giftClass(relation);
+    const st = giftStatus(receiver, date).receivers.find((r) => r.id === receiver);
+    const field = cls === 'direct' ? 'deductDirect' : cls === 'other' ? 'deductOther' : null;
+    const limit = cls === 'spouse' ? GIFT_RULES.limits.spouse : GIFT_RULES.limits[cls];
+    const usedAlready = st ? (cls === 'direct' ? st.direct : cls === 'other' ? st.other : 0) : 0;
+    const d = Math.min(amt, Math.max(0, limit - usedAlready));
+    if (field) ded[field] = d;
+    base = Math.max(0, amt - d);
+  }
+  const surcharge = ['조부', '조모'].includes(relation) ? 1.3 : 1;     // 세대생략 할증 30%
+  const calcTax = Math.round(giftTax(base) * surcharge);
+  const prevTax = last ? Number(last.calcTax) || 0 : 0;
+  const credit = Math.max(0, Math.round((calcTax - prevTax) * GIFT_RULES.creditRate));
+  const paid = Math.max(0, calcTax - prevTax - credit);
+  return {
+    ...ded, addBack: last ? Number(last.taxable) || 0 : 0, taxable: (last ? Number(last.taxable) || 0 : 0) + amt,
+    // 이번 증여의 맨 위 금액에 붙는 세율 (과세표준이 구간 끝과 같으면 그 구간 세율)
+    base, rate: `${Math.round(GIFT_RULES.brackets.find(([upto]) => base <= upto)[1] * 100)}%`, calcTax, prevTax, credit, paid,
+    droppedSinceLast: prev.some((g) => g.date < from),
+  };
 }

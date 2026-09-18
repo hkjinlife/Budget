@@ -693,3 +693,78 @@ export function commitLinks(choices) {
   sums.forEach((v, k) => notes.push(`${k} +${v.toLocaleString('ko-KR')}원`));
   return notes;
 }
+
+/* ---------- 증여세 신고서 PDF (홈택스 '증여세과세표준신고 및 자진납부계산서') ---------- */
+// 글자가 한 자씩 따로 들어 있어서, 위치로 단어를 다시 묶고 서식의 칸 번호(17·23·24·…·50) 옆 금액을 읽는다.
+// 서식: 상속세 및 증여세법 시행규칙 별지 제10호(기본세율 적용). 왼쪽 칸 번호 x<140, 오른쪽 칸 번호 x 310~350.
+const GIFT_LEFT = {
+  23: 'addBack', 24: 'taxable', 25: 'deductSpouse', 26: 'deductDirect', 28: 'deductOther',
+  29: 'deductMarriage', 30: 'deductBirth', 34: 'base', 35: 'rate', 36: 'calcTaxBase', 37: 'skipGen', 38: 'calcTax',
+};
+const GIFT_RIGHT = { 42: 'prevTax', 44: 'credit', 50: 'paid' };
+
+async function pdfWords(file) {
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const page = await pdf.getPage(1);
+  const tc = await page.getTextContent();
+  const items = tc.items.filter((i) => i.str.trim()).map((i) => ({
+    s: i.str, x: i.transform[4], y: i.transform[5], w: i.width, h: Math.abs(i.transform[3]),
+  }));
+  items.sort((a, b) => b.y - a.y || a.x - b.x);
+  const rows = [];
+  items.forEach((it) => {
+    let r = rows.find((row) => Math.abs(row.y - it.y) < 2);
+    if (!r) { r = { y: it.y, items: [] }; rows.push(r); }
+    r.items.push(it);
+  });
+  const words = [];
+  rows.forEach((r) => {
+    r.items.sort((a, b) => a.x - b.x);
+    let cur = null;
+    r.items.forEach((it) => {
+      if (cur && it.x - (cur.x + cur.w) < Math.max(1.5, it.h * 0.6)) { cur.s += it.s; cur.w = it.x + it.w - cur.x; }
+      else { cur = { ...it }; words.push(cur); }
+    });
+  });
+  return words.map((w) => ({ s: w.s.replace(/\s+/g, ''), x: w.x, y: w.y }));
+}
+
+/** 증여세 신고서 PDF를 읽어 칸별 숫자를 돌려준다. 신고서가 아니면 null */
+export async function parseGiftReturn(file) {
+  const words = await pdfWords(file);
+  const text = words.map((w) => w.s).join('');
+  if (!/증여세과세표준신고및자진납부계산서/.test(text)) return null;
+  const isNum = (s) => /^[\d,]+%?$/.test(s);
+  const value = (s) => (s.endsWith('%') ? s : Number(s.replace(/,/g, '')));
+  // 칸 번호와 같은 줄(±3)에 있는 금액
+  const pick = (fieldWord, minX, maxX) => {
+    const hit = words.filter((w) => isNum(w.s) && w.x >= minX && w.x < maxX && Math.abs(w.y - fieldWord.y) <= 3)
+      .sort((a, b) => Math.abs(a.y - fieldWord.y) - Math.abs(b.y - fieldWord.y))[0];
+    return hit ? value(hit.s) : null;
+  };
+  const out = {};
+  Object.entries(GIFT_LEFT).forEach(([no, key]) => {
+    const fw = words.find((w) => w.s === no && w.x < 140 && words.some((v) => isNum(v.s) && v.x >= 200 && v.x < 316 && Math.abs(v.y - w.y) <= 3));
+    if (fw) out[key] = pick(fw, 200, 316);
+  });
+  Object.entries(GIFT_RIGHT).forEach(([no, key]) => {
+    const fw = words.find((w) => w.s === no && w.x > 310 && w.x < 350);
+    if (fw) out[key] = pick(fw, 440, 10000);
+  });
+  // 17 증여재산가액: 왼쪽 칸 번호가 금액보다 한 줄 위에 있어, 같은 줄의 오른쪽 칸 번호 40으로 줄을 찾는다
+  const f40 = words.find((w) => w.s === '40' && w.x > 310 && w.x < 350);
+  if (f40) out.amount = pick(f40, 200, 316);
+  const date = (text.match(/증여일자(\d{4})\.(\d{2})\.(\d{2})/) || []).slice(1).join('-');
+  return {
+    fileName: file.name,
+    date,
+    filing: (text.match(/\[✔\](기한내|수정|기한후)신고/) || [])[1] || '',
+    docNo: (text.match(/(\d{3}-\d{4}-\d{7})/) || [])[1] || '',
+    receiverInitial: (text.match(/1성명(\S)\*/) || [])[1] || '',
+    giverInitial: (text.match(/8성명(\S)\*/) || [])[1] || '',
+    relationText: (text.match(/증여자와의관계(\S{1,3}?)8성명/) || [])[1] || '',
+    ...out,
+    deductBirthTotal: (out.deductMarriage || 0) + (out.deductBirth || 0),     // 혼인·출산은 합쳐 1억
+  };
+}
