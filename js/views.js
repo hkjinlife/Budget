@@ -25,39 +25,102 @@ const lockNote = (what) => `<div class="notice">지금은 <b>보기 모드</b>�
 export function welcome() {
   return `
   <div class="card">
-    <h2>처음 오셨네요</h2>
-    <p>아직 가계부 데이터가 없습니다. 클라우드 공유 폴더에 있는 <b>가계부_데이터.json</b>을 불러오면 시작됩니다.</p>
-    <div class="btn-row" style="margin-top:12px">
-      <label class="btn btn-primary" style="display:inline-block">데이터 파일 불러오기
-        <input type="file" id="welcomeImport" accept=".json" hidden></label>
-      <button class="btn" data-goto="entry">직접 입력부터 하기</button>
+    <h2>우리집 가계부</h2>
+    <p class="muted">가족이 같이 쓰는 가계부입니다. 아래 버튼을 누르면 시작됩니다.</p>
+    <div class="btn-row" style="margin-top:14px">
+      ${gd.isConfigured()
+    ? '<button class="btn btn-primary" id="setupDrive" style="font-size:16px;padding:12px 20px">구글로 시작하기</button>'
+    : '<label class="btn btn-primary" style="display:inline-block">가계부 파일 불러오기<input type="file" id="welcomeImport" accept=".json" hidden></label>'}
     </div>
+    ${gd.isConfigured() ? `<p class="muted" style="margin-top:10px">구글 계정으로 로그인한 뒤, 공유받은
+      <b>가계부_데이터.json</b> 파일을 고르면 끝입니다. 한 번만 하면 다음부터는 바로 열립니다.</p>` : ''}
   </div>
+
   <div class="card">
-    <h2>아이폰에서 앱처럼 쓰기</h2>
+    <h2>휴대폰에서 앱처럼 쓰기</h2>
     <ol class="tight">
-      <li>사파리에서 이 주소를 엽니다.</li>
-      <li>아래 <b>공유</b> 버튼(↑)을 누릅니다.</li>
+      <li>사파리(아이폰) 또는 크롬(안드로이드)으로 이 주소를 엽니다.</li>
+      <li>공유 버튼(↑) 또는 메뉴를 누릅니다.</li>
       <li><b>홈 화면에 추가</b>를 고릅니다.</li>
     </ol>
-    <p class="muted" style="margin-top:8px">홈 화면 아이콘으로 열면 주소창 없이 전체화면으로 뜨고, 인터넷이 없어도 열립니다.</p>
-  </div>`;
+  </div>
+
+  <details class="card">
+    <summary class="muted">처음 만드는 경우 (집에서 한 사람만)</summary>
+    <div style="margin-top:12px">
+      <div class="row-2">
+        <label class="field">첫 번째 사람 이름
+          <input id="setupName1" value="${esc(state.data.users[0]?.name || '')}" placeholder="예: 홍길동"></label>
+        <label class="field">두 번째 사람 이름
+          <input id="setupName2" value="${esc(state.data.users[1]?.name || '')}" placeholder="없으면 비워두세요"></label>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="setupEmpty">이 이름으로 빈 가계부 시작</button>
+        <label class="btn" style="display:inline-block">쓰던 파일 불러오기
+          <input type="file" id="welcomeImport2" accept=".json" hidden></label>
+      </div>
+    </div>
+  </details>`;
 }
 
 function mountWelcome() {
-  document.getElementById('welcomeImport').onchange = async (e) => {
+  const g = (id) => document.getElementById(id);
+  const doImport = async (e) => {
     try {
       const r = await importFile(e.target.files[0]);
+      state.data.onboarded = true;
+      touch();
       toast(`${r.total}건 불러왔습니다.`);
+      renderUserSwitch();
       render();
     } catch (err) { toast(err.message); }
   };
-  document.querySelector('[data-goto="entry"]').onclick = () => { state.ui.view = 'entry'; render(); };
+  if (g('welcomeImport')) g('welcomeImport').onchange = doImport;
+  if (g('welcomeImport2')) g('welcomeImport2').onchange = doImport;
+
+  if (g('setupEmpty')) {
+    g('setupEmpty').onclick = () => {
+      const n1 = g('setupName1').value.trim();
+      const n2 = g('setupName2').value.trim();
+      if (!n1) { toast('첫 번째 사람 이름을 넣어주세요.'); return; }
+      state.data.users = [{ id: 'user1', name: n1 }];
+      if (n2) state.data.users.push({ id: 'user2', name: n2 });
+      state.data.onboarded = true;
+      touch();
+      renderUserSwitch();
+      toast('시작합니다. 입력 탭에서 거래를 적어보세요.');
+      render();
+    };
+  }
+
+  if (g('setupDrive')) {
+    g('setupDrive').onclick = async () => {
+      try {
+        toast('구글 로그인 창이 열립니다…');
+        await gd.connect();
+        const f = await gd.pickFile();
+        if (!f) { toast('파일을 고르지 않았습니다.'); return; }
+        const r = await gd.pull({ merge: (incoming) => applyIncoming(incoming, { mode: 'merge' }) });
+        state.data.onboarded = true;
+        touch();
+        toast(`${f.name}에서 ${r.total || 0}건 받았습니다.`);
+        renderUserSwitch();
+        render();
+      } catch (e) { toast(e.message); }
+    };
+  }
 }
 
 export function dashboard() {
   const mos = M.months();
-  if (!mos.length) return welcome();
+  if (!mos.length) {
+    if (!state.data.onboarded) return welcome();
+    return `<div class="card"><h2>아직 거래가 없습니다</h2>
+      <p class="muted">아래 <b>입력</b> 탭에서 직접 적거나, 카드사·은행 파일을 올리면 채워집니다.</p>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-primary" data-goto="entry">거래 입력하러 가기</button>
+      </div></div>`;
+  }
   const cur = state.ui.month && mos.includes(state.ui.month) ? state.ui.month : mos[mos.length - 1];
   state.ui.month = cur;
   const totals = M.monthTotals();
@@ -125,7 +188,12 @@ export function dashboard() {
 
 function mountDashboard() {
   const mos = M.months();
-  if (!mos.length) { mountWelcome(); return; }
+  if (!mos.length) {
+    if (!state.data.onboarded) { mountWelcome(); return; }
+    const go = document.querySelector('[data-goto="entry"]');
+    if (go) go.onclick = () => { state.ui.view = 'entry'; render(); };
+    return;
+  }
   const cur = state.ui.month;
   const totals = M.monthTotals();
   const show = mos.slice(-8);
@@ -903,14 +971,18 @@ export function settings() {
     ${gd.isConfigured() ? `
       <p class="muted">${gd.drive.fileId
     ? `연결된 파일: <b>${esc(gd.drive.fileName || '가계부_데이터.json')}</b> — 고치면 3초 뒤 자동 저장되고, 앱을 열 때 최신 내용을 받아옵니다.`
-    : '드라이브에 있는 가계부 파일을 고르면 자동 동기화가 시작됩니다.'}</p>
+    : `드라이브에 가계부 파일이 <b>이미 있으면</b> '드라이브 파일 고르기', <b>처음 만드는 거면</b> '새 파일 만들기'를 누르세요.
+        지금 이 기기에는 거래 ${state.data.transactions.length}건이 있습니다.`}</p>
       <div class="btn-row" style="margin-top:10px">
         <button class="btn btn-primary" id="gdConnect">구글 연결</button>
         <button class="btn" id="gdPick">드라이브 파일 고르기</button>
-        <button class="btn" id="gdCreate">새 파일 만들기</button>
         ${gd.drive.fileId ? '<button class="btn" id="gdPull">지금 불러오기</button><button class="btn" id="gdPush">지금 저장</button>' : ''}
         ${gd.drive.fileId ? '<button class="btn btn-quiet" id="gdForget">연결 끊기</button>' : ''}
       </div>
+      ${gd.drive.fileId ? '' : `<details style="margin-top:10px"><summary class="muted">드라이브에 가계부 파일이 아직 없나요?</summary>
+        <p class="muted" style="margin-top:8px">이 기기에 있는 거래 ${state.data.transactions.length}건으로 드라이브에 파일을 처음 만듭니다.
+          집안에서 한 사람만, 한 번만 하세요. 나머지 사람은 '드라이브 파일 고르기'를 씁니다.</p>
+        <button class="btn" id="gdCreate">드라이브에 처음 올리기</button></details>`}
       <label class="field" style="margin-top:12px">자동 동기화
         <select id="gdAuto">
           <option value="on" ${state.ui.autoSync !== false ? 'selected' : ''}>켜기 (권장)</option>
@@ -945,6 +1017,16 @@ export function settings() {
   </div>
 
   <div class="card">
+    <div class="card-head"><h2>화면 구성</h2><span class="muted">이 기기에만 적용됩니다</span></div>
+    <label class="field">보이는 탭
+      <select id="uiSimple">
+        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (대시보드·투자·대출·리포트·거래내역·입력·설정)</option>
+        <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·거래내역·입력·설정)</option>
+      </select></label>
+    <p class="muted">투자·대출·리포트를 안 보는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
+  </div>
+
+  <div class="card">
     <h2>새로 시작하기</h2>
     <p class="muted">카드·은행 파일을 처음부터 다시 올리고 싶을 때 씁니다. 지우기 전에 <b>파일 내보내기</b>로 백업해두세요.</p>
     ${editable() ? `<div class="btn-row" style="margin-top:10px">
@@ -970,11 +1052,20 @@ export function settings() {
   </div>
 
   <div class="card">
-    <h2>사용자</h2>
+    <div class="card-head"><h2>사용자</h2>
+      ${editable() ? '<button class="btn" id="addUser">+ 사용자 추가</button>' : ''}</div>
     ${editable() ? '' : lockNote('이름과 분류 규칙')}
-    <div class="table-wrap"><table><thead><tr><th>이름</th><th>ID</th></tr></thead>
-      <tbody>${d.users.map((u) => `<tr><td>${editable() ? `<input data-user="${u.id}" value="${esc(u.name)}">` : esc(u.name)}</td><td class="muted">${u.id}</td></tr>`).join('')}</tbody>
+    <div class="table-wrap"><table><thead><tr><th>이름</th><th class="num">거래</th>${editable() ? '<th></th>' : ''}</tr></thead>
+      <tbody>${d.users.map((u) => {
+    const n = d.transactions.filter((t) => t.owner === u.id).length;
+    return `<tr data-userrow="${u.id}">
+          <td>${editable() ? `<input data-user="${u.id}" value="${esc(u.name)}" style="min-width:140px">` : esc(u.name)}</td>
+          <td class="num muted">${n.toLocaleString('ko-KR')}건</td>
+          ${editable() ? '<td><button class="btn btn-quiet" data-deluser>✕</button></td>' : ''}
+        </tr>`;
+  }).join('')}</tbody>
     </table></div>
+    ${editable() ? '<p class="muted" style="margin-top:8px">아이들 것도 따로 만들어두면 누가 얼마 썼는지 나눠 볼 수 있습니다.</p>' : ''}
   </div>
 
   <div class="card">
@@ -1032,9 +1123,16 @@ function mountSettings() {
       const r = await gd.pull({ merge });
       toast(`${f.name} 연결됨. 새 거래 ${r.added || 0}건 받았습니다.`);
     });
-    g('gdCreate').onclick = wrap(async () => {
+    if (g('gdCreate')) g('gdCreate').onclick = wrap(async () => {
+      const n = state.data.transactions.length;
+      if (!n) {
+        toast('지금 앱에 거래가 없습니다. 드라이브에 이미 파일이 있다면 "드라이브 파일 고르기"를 쓰세요.');
+        return;
+      }
+      if (!confirm(`지금 이 기기에 있는 거래 ${n}건으로 드라이브에 새 파일을 만듭니다.\n\n`
+        + '드라이브에 이미 가계부 파일이 있다면, 취소하고 "드라이브 파일 고르기"를 쓰세요. 파일이 두 개가 되면 헷갈립니다.\n\n계속할까요?')) return;
       const f = await gd.createFile();
-      toast(`드라이브에 ${f.name}을 만들었습니다.`);
+      toast(`드라이브에 ${f.name}을 만들었습니다. (거래 ${n}건)`);
     });
     if (g('gdPull')) g('gdPull').onclick = wrap(async () => {
       const r = await gd.pull({ merge });
@@ -1125,6 +1223,20 @@ function mountSettings() {
       render();
     } catch (err) { toast(err.message); }
   };
+  const simpleSel = document.getElementById('uiSimple');
+  if (simpleSel) {
+    simpleSel.onchange = (e) => {
+      state.ui.simple = e.target.value === 'simple';
+      saveUIState();
+      applyTabVisibility();
+      if (state.ui.simple && ['invest', 'loan', 'report'].includes(state.ui.view)) {
+        state.ui.view = 'dashboard';
+      }
+      render();
+      toast(state.ui.simple ? '간단히 보기로 바꿨습니다.' : '전체 화면으로 바꿨습니다.');
+    };
+  }
+
   const resetTx = document.getElementById('resetTx');
   if (resetTx) {
     resetTx.onclick = () => {
@@ -1148,6 +1260,26 @@ function mountSettings() {
     };
   }
 
+  const addUserBtn = document.getElementById('addUser');
+  if (addUserBtn) {
+    addUserBtn.onclick = () => {
+      const name = prompt('추가할 사람 이름을 적어주세요.');
+      if (!name || !name.trim()) return;
+      state.data.users.push({ id: `u${Date.now().toString(36)}`, name: name.trim() });
+      touch(); renderUserSwitch(); render();
+    };
+  }
+  document.querySelectorAll('[data-deluser]').forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.closest('[data-userrow]').dataset.userrow;
+      const n = state.data.transactions.filter((t) => t.owner === id).length;
+      if (state.data.users.length <= 1) { toast('사용자가 한 명은 있어야 합니다.'); return; }
+      if (n && !confirm(`이 사람 이름으로 된 거래가 ${n}건 있습니다. 지우면 그 거래는 '누구 것인지 없음'이 됩니다.\n계속할까요?`)) return;
+      state.data.users = state.data.users.filter((u) => u.id !== id);
+      if (state.ui.user === id) state.ui.user = 'all';
+      touch(); renderUserSwitch(); render();
+    };
+  });
   document.querySelectorAll('[data-user]').forEach((el) => {
     el.onchange = () => {
       state.data.users.find((u) => u.id === el.dataset.user).name = el.value;
@@ -1211,6 +1343,15 @@ export function render() {
   app.innerHTML = html();
   mount?.();
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.view === state.ui.view));
+  applyTabVisibility();
+}
+
+/** 간단히 보기일 때 투자·대출·리포트 탭을 숨긴다 */
+export function applyTabVisibility() {
+  const hide = state.ui.simple ? ['invest', 'loan', 'report'] : [];
+  document.querySelectorAll('.tab').forEach((b) => {
+    b.style.display = hide.includes(b.dataset.view) ? 'none' : '';
+  });
 }
 
 export function renderUserSwitch() {

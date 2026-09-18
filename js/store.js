@@ -85,7 +85,7 @@ function emptyData() {
     version: 1, users: [{ id: 'user1', name: '남편' }, { id: 'user2', name: '아내' }],
     accounts: [], categories: [], transactions: [],
     investment: { flows: [], holdings: [], jeonbukLedger: [], valuationDate: today() },
-    otherAssets: [], budgets: {}, notes: [], feedback: [],
+    otherAssets: [], budgets: {}, notes: [], feedback: [], onboarded: false,
   };
 }
 
