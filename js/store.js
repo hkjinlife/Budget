@@ -98,6 +98,8 @@ function normalize(d) {
   d.investment.flows ||= [];
   d.investment.holdings ||= [];
   d.budgets ||= {};
+  d.monthly ||= {};
+  d.otherAssets ||= [];
   d.transactions.forEach((t) => { t.type ||= 'expense'; });
 }
 
@@ -242,8 +244,20 @@ export function applyIncoming(incoming, { mode = 'merge' } = {}) {
   mine.feedback.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   // 설정(계좌·카테고리·대출·투자·사용자)은 더 최근에 저장된 파일 것을 쓴다
+  // 월말 정리 기록은 달·항목별로 합친다 (한쪽이라도 끝냈으면 끝낸 것으로)
+  if (incoming.monthly) {
+    mine.monthly ||= {};
+    Object.entries(incoming.monthly).forEach(([mo, items]) => {
+      mine.monthly[mo] ||= {};
+      Object.entries(items).forEach(([id, st]) => {
+        const cur = mine.monthly[mo][id];
+        if (!cur || (st.done && !cur.done) || (st.at || '') > (cur.at || '')) mine.monthly[mo][id] = st;
+      });
+    });
+  }
+
   if (newer) {
-    ['users', 'accounts', 'categories', 'loans', 'otherAssets', 'budgets'].forEach((k) => {
+    ['users', 'accounts', 'categories', 'loans', 'otherAssets', 'budgets', 'checklist'].forEach((k) => {
       if (incoming[k]) mine[k] = incoming[k];
     });
     if (incoming.investment) mine.investment = incoming.investment;

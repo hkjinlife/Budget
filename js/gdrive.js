@@ -20,7 +20,7 @@ export const drive = {
 
 const listeners = [];
 export function onDriveChange(fn) { listeners.push(fn); }
-function emit(status) {
+function emitDrive(status) {
   if (status) drive.status = status;
   listeners.forEach((f) => f());
 }
@@ -67,7 +67,7 @@ export async function connect({ silent = false } = {}) {
       try {
         localStorage.setItem(LS_TOKEN, JSON.stringify({ t: drive.token, e: drive.tokenExpiry }));
       } catch { /* 무시 */ }
-      emit('구글 연결됨');
+      emitDrive('구글 연결됨');
       res(drive.token);
     };
     try {
@@ -89,7 +89,7 @@ export function signOut() {
   drive.token = null;
   drive.tokenExpiry = 0;
   try { localStorage.removeItem(LS_TOKEN); } catch { /* 무시 */ }
-  emit('연결 끊음');
+  emitDrive('연결 끊음');
 }
 
 /* ---------- 파일 고르기 / 만들기 ---------- */
@@ -160,7 +160,7 @@ function setFile(id, name) {
   drive.fileId = id;
   drive.fileName = name;
   try { localStorage.setItem(LS_FILE, JSON.stringify({ id, name })); } catch { /* 무시 */ }
-  emit(`파일 연결됨: ${name}`);
+  emitDrive(`파일 연결됨: ${name}`);
 }
 
 export function restoreFile() {
@@ -209,7 +209,7 @@ async function meta() {
 /** 드라이브 파일을 읽어 지금 데이터와 합친다 */
 export async function pull({ merge }) {
   if (!drive.fileId) throw new Error('먼저 파일을 고르세요.');
-  drive.busy = true; emit('불러오는 중…');
+  drive.busy = true; emitDrive('불러오는 중…');
   try {
     const tk = await token();
     const r = await fetch(`https://www.googleapis.com/drive/v3/files/${drive.fileId}?alt=media`, {
@@ -220,22 +220,22 @@ export async function pull({ merge }) {
     const info = await meta();
     drive.lastModified = info.modifiedTime;
     const result = merge(incoming);
-    emit(`불러옴 (${new Date(info.modifiedTime).toLocaleString('ko-KR')})`);
+    emitDrive(`불러옴 (${new Date(info.modifiedTime).toLocaleString('ko-KR')})`);
     return result;
   } finally {
-    drive.busy = false; emit();
+    drive.busy = false; emitDrive();
   }
 }
 
 /** 지금 데이터를 드라이브에 쓴다. 그 사이 다른 기기가 고쳤으면 먼저 합친다 */
 export async function push({ merge, force = false } = {}) {
   if (!drive.fileId) throw new Error('먼저 파일을 고르세요.');
-  drive.busy = true; emit('저장 중…');
+  drive.busy = true; emitDrive('저장 중…');
   try {
     if (!force && drive.lastModified) {
       const info = await meta();
       if (info.modifiedTime !== drive.lastModified) {
-        emit('다른 기기의 변경을 먼저 합치는 중…');
+        emitDrive('다른 기기의 변경을 먼저 합치는 중…');
         await pull({ merge });
       }
     }
@@ -249,10 +249,10 @@ export async function push({ merge, force = false } = {}) {
     const info = await r.json();
     drive.lastModified = info.modifiedTime;
     state.dirty = false;
-    emit(`드라이브에 저장됨 (${new Date(info.modifiedTime).toLocaleTimeString('ko-KR')})`);
+    emitDrive(`드라이브에 저장됨 (${new Date(info.modifiedTime).toLocaleTimeString('ko-KR')})`);
     return info;
   } finally {
-    drive.busy = false; emit();
+    drive.busy = false; emitDrive();
   }
 }
 

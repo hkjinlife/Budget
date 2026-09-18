@@ -340,3 +340,52 @@ export function reportText(r) {
   L.push(`· 순자산(부동산 등 기록 자산 포함 − 대출): ${won(r.netWorth)}`);
   return L.join('\n');
 }
+
+
+/* ---------- 달력 ---------- */
+/** 날짜별 소비 합계 (YYYY-MM-DD → 원) */
+export function dayTotals(month, txs = visibleTx()) {
+  const out = new Map();
+  txs.filter((t) => isSpend(t) && t.date.startsWith(month)).forEach((t) => {
+    out.set(t.date, (out.get(t.date) || 0) + -t.amount);
+  });
+  return out;
+}
+
+/** 달력 칸에 들어갈 짧은 금액 (8,500 / 3.2만 / 299만 / 7.2억) */
+export function shortWon(n) {
+  if (!n) return '';
+  const a = Math.abs(n);
+  if (a >= 100000000) return `${(n / 100000000).toFixed(1).replace(/\.0$/, '')}억`;
+  if (a >= 1000000) return `${Math.round(n / 10000)}만`;
+  if (a >= 10000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')}만`;
+  return n.toLocaleString('ko-KR');
+}
+
+/* ---------- 월말 정리 ---------- */
+// kind: upload(파일 올리기) / holdings(투자 평가금액 여러 개) / asset(자산 하나의 금액)
+export const DEFAULT_CHECKLIST = [
+  { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀(.xlsx)을 받아 올리세요' },
+  { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용대금명세서 또는 실시간 이용내역(.xls)' },
+  { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역 엑셀' },
+  { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액을 고치세요' },
+  { id: 'kis', name: '한국투자증권', kind: 'asset', match: '연금저축|한국투자', hint: '연금저축 평가금액과 원금', alsoUpload: true, withPrincipal: true },
+  { id: 'apt', name: '아파트 시세', kind: 'asset', match: '아파트', hint: 'KB시세나 실거래가' },
+  { id: 'housing_sub', name: '주택청약', kind: 'asset', match: '청약', hint: '지금까지 넣은 총액' },
+  { id: 'metlife', name: '변액유니버셜', kind: 'asset', match: '변액', hint: '보험사 앱의 적립금' },
+];
+
+export function checklist() {
+  return state.data.checklist?.length ? state.data.checklist : DEFAULT_CHECKLIST;
+}
+
+export function monthStatus(month) {
+  state.data.monthly ||= {};
+  return (state.data.monthly[month] ||= {});
+}
+
+export function findAsset(item) {
+  const assets = state.data.otherAssets || [];
+  const re = item.match ? new RegExp(item.match) : null;
+  return assets.find((a) => (re ? re.test(a.name) : a.name === item.name)) || null;
+}

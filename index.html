@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="우리집 가계부">
 <meta name="theme-color" content="#1f3864">
 <title>우리집 가계부</title>
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=4">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <script src="vendor/chart.umd.min.js" defer></script>
@@ -31,11 +31,12 @@
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button class="tab is-active" data-view="dashboard" role="tab">대시보드</button>
+    <button class="tab" data-view="entry" role="tab">입력</button>
+    <button class="tab" data-view="monthly" role="tab">월말 정리</button>
     <button class="tab" data-view="invest" role="tab">투자</button>
     <button class="tab" data-view="loan" role="tab">대출</button>
     <button class="tab" data-view="report" role="tab">리포트</button>
     <button class="tab" data-view="transactions" role="tab">거래내역</button>
-    <button class="tab" data-view="entry" role="tab">입력</button>
     <button class="tab" data-view="settings" role="tab">설정</button>
   </nav>
 </header>

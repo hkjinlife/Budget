@@ -295,60 +295,128 @@ function mountTransactions() {
   draw();
 }
 
-/* ================= 수기 입력 ================= */
+/* ================= 입력 (달력) ================= */
+const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
+
 export function entry() {
-  const accounts = state.data.accounts;
+  // 날짜를 고른 상태면 입력 창, 아니면 달력
+  return state.ui.entryDate ? entryForm(state.ui.entryDate) : entryCalendar();
+}
+
+function entryCalendar() {
+  const month = state.ui.calMonth || today().slice(0, 7);
+  state.ui.calMonth = month;
+  const [y, m] = month.split('-').map(Number);
+  const first = new Date(y, m - 1, 1);
+  const days = new Date(y, m, 0).getDate();
+  const totals = M.dayTotals(month);
+  const mt = M.monthTotals().get(month) || { 고정비: 0, 변동비: 0, 일회성: 0 };
+  const regular = mt.고정비 + mt.변동비;
+  const todayStr = today();
+  const cells = [];
+  for (let i = 0; i < first.getDay(); i += 1) cells.push('<div class="cal-cell is-empty"></div>');
+  for (let d = 1; d <= days; d += 1) {
+    const date = `${month}-${String(d).padStart(2, '0')}`;
+    const amt = totals.get(date) || 0;
+    const dow = (first.getDay() + d - 1) % 7;
+    cells.push(`<button class="cal-cell ${date === todayStr ? 'is-today' : ''} ${dow === 0 ? 'is-sun' : dow === 6 ? 'is-sat' : ''}"
+      data-date="${date}" aria-label="${m}월 ${d}일 ${amt ? M.won(amt) : '지출 없음'}">
+      <span class="cal-day">${d}</span>
+      <span class="cal-amt">${M.shortWon(amt)}</span></button>`);
+  }
   return `
   <div class="card">
-    <h2>새 거래 입력</h2>
-    <div class="row-2">
-      <label class="field">날짜<input type="date" id="eDate" value="${today()}"></label>
-      <label class="field">시간(선택)<input type="time" id="eTime"></label>
+    <div class="cal-head">
+      <button class="btn btn-quiet" id="calPrev" aria-label="이전 달">‹</button>
+      <div class="cal-title"><b>${y}년 ${m}월</b>
+        <span class="muted">소비 ${M.won(regular)}${mt.일회성 ? ` · 일회성 ${M.manwon(mt.일회성)}원 별도` : ''}</span></div>
+      <button class="btn btn-quiet" id="calNext" aria-label="다음 달">›</button>
     </div>
-    <label class="field">내용 (가맹점·적요)<input id="eName" placeholder="예: 한살림 철산매장"></label>
-    <div class="row-2">
-      <label class="field">금액 (지출은 그냥 숫자)<input id="eAmt" type="number" inputmode="numeric" placeholder="예: 34500"></label>
-      <label class="field">종류<select id="eType">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <div class="cal-grid">
+      ${WEEK.map((w, i) => `<div class="cal-week ${i === 0 ? 'is-sun' : i === 6 ? 'is-sat' : ''}">${w}</div>`).join('')}
+      ${cells.join('')}
     </div>
-    <div class="row-2">
-      <label class="field">사용자<select id="eOwner">${state.data.users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
-      <label class="field">수단<select id="eAcct"><option value="">(없음/현금)</option>
-        ${accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" id="calToday">오늘 입력하기</button>
+      <span class="muted" style="align-self:center">날짜를 누르면 그날 입력 창이 열립니다</span>
     </div>
-    <label class="field">카테고리<select id="eCat">${catOptions('food_grocery')}</select></label>
-    <label class="field">메모<input id="eMemo" placeholder="선택"></label>
-    <div class="btn-row"><button class="btn btn-primary" id="eSave">추가</button>
-      <span class="muted" id="eHint">지출이면 금액만 넣으면 됩니다. 수입은 종류를 '수입'으로 바꾸세요.</span></div>
+  </div>`;
+}
+
+function entryForm(date) {
+  const accounts = state.data.accounts;
+  const list = M.visibleTx().filter((t) => t.date === date).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const spend = list.filter((t) => t.type === 'expense' && !t.excluded).reduce((a, t) => a + -t.amount, 0);
+  const d = new Date(date);
+  const defaultOwner = state.ui.user !== 'all' ? state.ui.user : state.data.users[0]?.id;
+  return `
+  <div class="card">
+    <div class="card-head">
+      <button class="btn btn-quiet" id="backCal">‹ 달력</button>
+      <h2 style="margin:0">${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})</h2>
+      <span class="muted">${M.won(spend)}</span>
+    </div>
+    <label class="field">내용 (가맹점·적요)<input id="eName" placeholder="예: 한살림 철산매장" autocomplete="off"></label>
+    <div class="row-2">
+      <label class="field">금액<input id="eAmt" type="number" inputmode="numeric" placeholder="예: 34500"></label>
+      <label class="field">카테고리<select id="eCat">${catOptions('food_grocery')}</select></label>
+    </div>
+    <details class="more">
+      <summary class="muted">더 적기 (종류·사용자·결제수단·시간·메모)</summary>
+      <div class="row-2" style="margin-top:10px">
+        <label class="field">종류<select id="eType">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+        <label class="field">사용자<select id="eOwner">${state.data.users.map((u) => `<option value="${u.id}" ${u.id === defaultOwner ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+      </div>
+      <div class="row-2">
+        <label class="field">결제수단<select id="eAcct"><option value="">(없음/현금)</option>
+          ${accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
+        <label class="field">시간<input type="time" id="eTime"></label>
+      </div>
+      <label class="field">날짜<input type="date" id="eDate" value="${date}"></label>
+      <label class="field">메모<input id="eMemo" placeholder="선택"></label>
+    </details>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" id="eSave">저장</button>
+      <button class="btn" id="eSaveMore">저장하고 하나 더</button>
+    </div>
   </div>
-  <div class="card"><h2>최근에 입력한 것</h2><div id="recentManual"></div></div>
 
   <div class="card">
-    <h2>카드사·은행 파일로 한 번에 넣기</h2>
-    <p class="muted">현대카드 이용내역(.xls), 신한카드(.xlsx), 그 밖에 날짜·내용·금액 열이 있는 엑셀/CSV를 읽습니다.
-      이미 있는 거래는 자동으로 건너뛰고, 빠진 것·금액이 다른 것을 알려줍니다.</p>
-    <div class="btn-row" style="margin-top:10px">
-      <input type="file" id="impFile" accept=".xls,.xlsx,.csv" style="max-width:320px">
-    </div>
-  </div>
-  <div id="impResult"></div>`;
+    <div class="card-head"><h2>이날 기록</h2><span class="muted">${list.length}건</span></div>
+    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr>
+        <td style="white-space:normal">${esc(t.merchant)}${t.memo ? ` <span class="chip">${esc(t.memo)}</span>` : ''}</td>
+        <td>${t.type === 'expense' ? esc(M.categoryName(t.categoryId)) : esc(TYPES[t.type] || '')}</td>
+        <td class="num ${t.amount > 0 ? 'pos' : ''}">${M.won(-t.amount)}</td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">아직 기록이 없습니다.</p>'}
+  </div>`;
 }
 
 function mountEntry() {
   const g = (id) => document.getElementById(id);
+  if (!state.ui.entryDate) {
+    const shift = (n) => {
+      const [y, m] = state.ui.calMonth.split('-').map(Number);
+      const dt = new Date(y, m - 1 + n, 1);
+      state.ui.calMonth = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      render();
+    };
+    g('calPrev').onclick = () => shift(-1);
+    g('calNext').onclick = () => shift(1);
+    g('calToday').onclick = () => { state.ui.entryDate = today(); render(); };
+    document.querySelectorAll('.cal-cell[data-date]').forEach((b) => {
+      b.onclick = () => { state.ui.entryDate = b.dataset.date; render(); };
+    });
+    return;
+  }
+
+  g('backCal').onclick = () => { state.ui.entryDate = null; render(); };
   g('eName').addEventListener('blur', () => {
     if (g('eType').value === 'expense' && g('eName').value) g('eCat').value = M.guessCategory(g('eName').value);
   });
-  const drawRecent = () => {
-    const list = state.data.transactions.filter((t) => t.source === 'manual').slice(-10).reverse();
-    g('recentManual').innerHTML = list.length
-      ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr><td>${t.date.slice(5)}</td>
-          <td>${esc(t.merchant)}</td><td class="num">${M.won(-t.amount)}</td>
-          <td>${esc(M.categoryName(t.categoryId))}</td></tr>`).join('')}</tbody></table></div>`
-      : '<p class="muted">아직 직접 입력한 거래가 없습니다.</p>';
-  };
-  g('eSave').onclick = () => {
+  g('eType').addEventListener('change', () => { g('eCat').disabled = g('eType').value !== 'expense'; });
+  const saveOne = () => {
     const amtRaw = Number(g('eAmt').value);
-    if (!g('eName').value.trim() || !amtRaw) { toast('내용과 금액을 넣어주세요.'); return; }
+    if (!g('eName').value.trim() || !amtRaw) { toast('내용과 금액을 넣어주세요.'); return false; }
     const type = g('eType').value;
     const amount = type === 'income' ? Math.abs(amtRaw) : -Math.abs(amtRaw);
     const { added, dup } = addTransactions([{
@@ -357,18 +425,28 @@ function mountEntry() {
       categoryId: type === 'expense' ? g('eCat').value : null,
       memo: g('eMemo').value.trim(), source: 'manual',
     }]);
-    if (!added.length && dup.length) { toast('같은 거래가 이미 있습니다.'); return; }
-    g('eName').value = ''; g('eAmt').value = ''; g('eMemo').value = '';
-    drawRecent();
-    toast('추가했습니다.');
+    if (!added.length && dup.length) { toast('같은 거래가 이미 있습니다.'); return false; }
+    toast('저장했습니다.');
+    return true;
   };
-  drawRecent();
-  mountImport();
+  g('eSave').onclick = () => {
+    if (!saveOne()) return;
+    state.ui.calMonth = g('eDate').value.slice(0, 7);
+    state.ui.entryDate = null;            // 저장하면 달력으로 돌아간다
+    render();
+  };
+  g('eSaveMore').onclick = () => {
+    if (!saveOne()) return;
+    state.ui.entryDate = g('eDate').value;
+    render();                              // 같은 날 입력 창을 비워서 다시 연다
+    document.getElementById('eName')?.focus();
+  };
+  setTimeout(() => g('eName')?.focus(), 50);
 }
 
-function mountImport() {
-  const out = document.getElementById('impResult');
-  document.getElementById('impFile').onchange = async (e) => {
+/* ================= 파일 올리기 (월말 정리에서 사용) ================= */
+function mountUpload(input, out, onDone) {
+  input.onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     out.innerHTML = '<div class="card"><p class="muted">읽는 중…</p></div>';
@@ -376,7 +454,7 @@ function mountImport() {
       const parsed = await parseFile(file);
       const rec = reconcile(parsed);
       out.innerHTML = renderReconcile(parsed, rec);
-      bindCardMapping(parsed, rec, out);
+      bindCardMapping(parsed, rec, out, onDone);
     } catch (err) {
       out.innerHTML = `<div class="card"><h2>읽지 못했습니다</h2><p class="neg">${esc(err.message)}</p></div>`;
     }
@@ -409,7 +487,7 @@ function guessAccountName(parsed, card) {
   return `${brand}${person ? `(${person.name})` : ''}${tail ? ` ${tail}` : ''}`.trim();
 }
 
-function bindCardMapping(parsed, rec, out) {
+function bindCardMapping(parsed, rec, out, onDone) {
   document.querySelectorAll('[data-card]').forEach((tr) => {
     const sel = tr.querySelector('[data-role="acct"]');
     const nameInput = tr.querySelector('[data-role="newname"]');
@@ -455,6 +533,7 @@ function bindCardMapping(parsed, rec, out) {
     });
     const { added, dup } = addTransactions(rec.fresh);
     toast(`${added.length}건 추가했습니다.`);
+    onDone?.(added.length);
     out.innerHTML = `<div class="card"><h2>완료</h2>
       <p>${added.length}건을 가계부에 넣었습니다.${dup.length ? ` (중복 ${dup.length}건은 건너뜀)` : ''}
       <b>저장</b> 버튼을 눌러 공유 폴더 파일에 반영하세요.</p></div>`;
@@ -525,6 +604,229 @@ function renderReconcile(parsed, rec) {
     ${tbl(rec.fresh.slice(0, 30).map((r) => `<tr><td>${r.date.slice(5)}</td><td>${esc(r.merchant)}</td>
       <td class="num">${M.won(-r.amount)}</td><td>${esc(M.categoryName(r.categoryId))}</td></tr>`).join(''),
   ['날짜', '내용', '금액', '카테고리'])}</div>` : ''}`;
+}
+
+
+/* ================= 월말 정리 ================= */
+/** 863500000 → "8억 6,350만원" */
+function koWon(n) {
+  if (!n) return '0원';
+  const eok = Math.floor(n / 100000000);
+  const man = Math.floor((n % 100000000) / 10000);
+  const won = n % 10000;
+  return [eok ? `${eok}억` : '', man ? `${man.toLocaleString('ko-KR')}만` : '', won ? won.toLocaleString('ko-KR') : '']
+    .filter(Boolean).join(' ') + '원';
+}
+
+function shiftMonth(month, n) {
+  const [y, m] = month.split('-').map(Number);
+  const dt = new Date(y, m - 1 + n, 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function monthlyView() {
+  const month = state.ui.chkMonth || today().slice(0, 7);
+  state.ui.chkMonth = month;
+  const items = M.checklist();
+  const st = M.monthStatus(month);
+  const done = items.filter((it) => st[it.id]?.done).length;
+  const [y, m] = month.split('-').map(Number);
+  const ed = editable();
+
+  const itemHtml = (it) => {
+    const s2 = st[it.id] || {};
+    const head = `<div class="chk-head">
+        <label class="chk-box"><input type="checkbox" data-chk="${it.id}" ${s2.done ? 'checked' : ''}>
+          <b>${esc(it.name)}</b></label>
+        <span class="muted">${s2.done ? `완료 ${esc((s2.at || '').slice(5, 10).replace('-', '/'))}${s2.note ? ` · ${esc(s2.note)}` : ''}` : esc(it.hint || '')}</span>
+        ${ed ? `<button class="btn btn-quiet" data-delitem="${it.id}" title="항목 지우기">✕</button>` : ''}
+      </div>`;
+    let body = '';
+    if (it.kind === 'upload') {
+      body = `<div class="btn-row"><label class="btn" style="display:inline-block">파일 올리기
+          <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv" hidden></label></div>
+        <div id="upOut_${it.id}"></div>`;
+    } else if (it.kind === 'asset') {
+      const a = M.findAsset(it);
+      const last = a?.value || 0;
+      const lastP = a?.principal || 0;
+      body = `${it.withPrincipal ? '<div class="muted" style="margin-bottom:4px">평가금액</div>' : ''}
+        <div class="asset-row">
+          <input type="number" inputmode="numeric" data-assetval="${it.id}" placeholder="${last ? Math.round(last / 10000) : '예: 86350'}">
+          <select data-assetunit="${it.id}"><option value="10000" selected>만원</option><option value="1">원</option></select>
+          ${it.withPrincipal ? '' : `<button class="btn btn-primary" data-assetsave="${it.id}">저장</button>`}
+        </div>
+        <div class="muted" data-assetpreview="${it.id}">${last ? `지금 기록: ${koWon(last)}` : '아직 기록이 없습니다'}</div>
+        ${it.withPrincipal ? `<div class="muted" style="margin:10px 0 4px">원금 (넣은 돈 합계)</div>
+        <div class="asset-row">
+          <input type="number" inputmode="numeric" data-assetprin="${it.id}" placeholder="${lastP ? Math.round(lastP / 10000) : '예: 4466'}">
+          <select data-prinunit="${it.id}"><option value="10000" selected>만원</option><option value="1">원</option></select>
+          <button class="btn btn-primary" data-assetsave="${it.id}">저장</button>
+        </div>
+        <div class="muted" data-prinpreview="${it.id}">${lastP ? `지금 기록: ${koWon(lastP)}${last ? ` · 손익 ${M.won(last - lastP, { sign: true })}` : ''}` : ''}</div>` : ''}
+        ${last ? `<button class="btn btn-quiet" data-assetsame="${it.id}" style="padding-left:0">지난 값과 같음 (${koWon(last)})</button>` : ''}
+        ${it.alsoUpload ? `<details class="more" style="margin-top:6px"><summary class="muted">거래내역 파일도 올리기 (선택)</summary>
+          <div class="btn-row" style="margin-top:8px"><label class="btn" style="display:inline-block">파일 올리기
+            <input type="file" data-upload="${it.id}" accept=".xls,.xlsx,.csv" hidden></label></div>
+          <div id="upOut_${it.id}"></div></details>` : ''}`;
+    } else if (it.kind === 'holdings') {
+      const hs = (state.data.investment?.holdings || []).filter((h) => (h.group || 'jeonbuk') === (it.group || 'jeonbuk'));
+      body = hs.length ? `<div class="table-wrap"><table><tbody>${hs.map((h) => `<tr>
+          <td style="white-space:normal">${esc(h.name)}</td>
+          <td class="num"><input type="number" inputmode="numeric" data-hold="${it.id}" data-hname="${esc(h.name)}" value="${h.value}" style="min-width:120px;text-align:right"></td>
+        </tr>`).join('')}</tbody></table></div>
+        <div class="btn-row" style="margin-top:8px"><button class="btn btn-primary" data-holdsave="${it.id}">평가금액 저장</button></div>`
+        : '<p class="muted">투자 탭에 등록된 자산이 없습니다.</p>';
+    }
+    return `<div class="card chk-item ${s2.done ? 'is-done' : ''}">${head}<div class="chk-body">${body}</div></div>`;
+  };
+
+  return `
+  <div class="card">
+    <div class="cal-head">
+      <button class="btn btn-quiet" id="chkPrev" aria-label="이전 달">‹</button>
+      <div class="cal-title"><b>${y}년 ${m}월 정리</b><span class="muted">${items.length}개 중 ${done}개 완료</span></div>
+      <button class="btn btn-quiet" id="chkNext" aria-label="다음 달">›</button>
+    </div>
+    <div class="progress"><i style="width:${items.length ? (done / items.length) * 100 : 0}%"></i></div>
+    <p class="muted" style="margin-top:8px">카드·통장은 파일을 올리면, 자산은 금액을 저장하면 자동으로 체크됩니다. 이번 달은 건너뛸 거면 직접 체크하세요.</p>
+  </div>
+  ${items.map(itemHtml).join('')}
+  ${ed ? `<div class="card"><h2>항목 추가</h2>
+    <div class="row-2">
+      <label class="field">이름<input id="newItemName" placeholder="예: 카카오뱅크"></label>
+      <label class="field">방식<select id="newItemKind">
+        <option value="upload">파일 올리기 (카드·통장)</option>
+        <option value="asset">금액 직접 입력 (자산)</option></select></label>
+    </div>
+    <label class="field">안내 문구 (선택)<input id="newItemHint" placeholder="예: 앱에서 거래내역 엑셀 받기"></label>
+    <div class="btn-row"><button class="btn" id="addItem">추가</button></div></div>` : ''}`;
+}
+
+function mountMonthly() {
+  const month = state.ui.chkMonth;
+  const st = M.monthStatus(month);
+  const mark = (id, note = '') => {
+    st[id] = { done: true, at: new Date().toISOString().slice(0, 16).replace('T', ' '), note };
+    touch();
+  };
+  const ensureOwnList = () => {
+    if (!state.data.checklist?.length) state.data.checklist = JSON.parse(JSON.stringify(M.DEFAULT_CHECKLIST));
+    return state.data.checklist;
+  };
+  document.getElementById('chkPrev').onclick = () => { state.ui.chkMonth = shiftMonth(month, -1); render(); };
+  document.getElementById('chkNext').onclick = () => { state.ui.chkMonth = shiftMonth(month, 1); render(); };
+
+  document.querySelectorAll('[data-chk]').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) mark(cb.dataset.chk, '직접 체크');
+      else { delete st[cb.dataset.chk]; touch(); }
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-upload]').forEach((input) => {
+    const id = input.dataset.upload;
+    mountUpload(input, document.getElementById(`upOut_${id}`), (n) => {
+      mark(id, `${n}건 추가`);
+      setTimeout(render, 1500);
+    });
+  });
+
+  // 자산 금액 직접 입력
+  const saveAsset = (id, value, principal = null) => {
+    const it = M.checklist().find((x) => x.id === id);
+    state.data.otherAssets ||= [];
+    let a = M.findAsset(it);
+    if (!a) {
+      a = { name: it.name, value: 0, principal: 0, memo: '' };
+      state.data.otherAssets.push(a);
+    }
+    a.value = value;
+    if (principal) a.principal = principal;
+    a.updatedAt = today();
+    a.history ||= [];
+    a.history = a.history.filter((h) => h.month !== month);
+    a.history.push({ month, value, ...(principal ? { principal } : {}), at: today() });
+    mark(id, koWon(value));
+    toast(`${it.name}: ${koWon(value)} 저장했습니다.`);
+    render();
+  };
+  document.querySelectorAll('[data-assetval]').forEach((input) => {
+    const id = input.dataset.assetval;
+    const unit = document.querySelector(`[data-assetunit="${id}"]`);
+    const preview = document.querySelector(`[data-assetpreview="${id}"]`);
+    const calc = () => Math.round(Number(input.value || 0) * Number(unit.value));
+    const show = () => { if (input.value) preview.textContent = `= ${koWon(calc())}`; };
+    input.addEventListener('input', show);
+    unit.addEventListener('change', show);
+    const pIn = document.querySelector(`[data-assetprin="${id}"]`);
+    const pUnit = document.querySelector(`[data-prinunit="${id}"]`);
+    const pPrev = document.querySelector(`[data-prinpreview="${id}"]`);
+    const calcP = () => (pIn && pIn.value ? Math.round(Number(pIn.value) * Number(pUnit.value)) : null);
+    if (pIn) {
+      const showP = () => {
+        const p2 = calcP();
+        if (!p2) return;
+        const v = calc();
+        pPrev.textContent = `= ${koWon(p2)}${v ? ` · 손익 ${M.won(v - p2, { sign: true })} (${M.pct((v - p2) / p2)})` : ''}`;
+      };
+      pIn.addEventListener('input', showP);
+      pUnit.addEventListener('change', showP);
+      input.addEventListener('input', showP);
+    }
+    document.querySelector(`[data-assetsave="${id}"]`).onclick = () => {
+      const v = calc();
+      if (!v) { toast('평가금액을 넣어주세요.'); return; }
+      saveAsset(id, v, calcP());
+    };
+  });
+  document.querySelectorAll('[data-assetsame]').forEach((b) => {
+    b.onclick = () => {
+      const it = M.checklist().find((x) => x.id === b.dataset.assetsame);
+      saveAsset(it.id, M.findAsset(it)?.value || 0);
+    };
+  });
+
+  // 전북은행 등 투자 평가금액
+  document.querySelectorAll('[data-holdsave]').forEach((b) => {
+    b.onclick = () => {
+      const id = b.dataset.holdsave;
+      document.querySelectorAll(`[data-hold="${id}"]`).forEach((input) => {
+        const h = state.data.investment.holdings.find((x) => x.name === input.dataset.hname);
+        if (h) h.value = Number(input.value) || 0;
+      });
+      state.data.investment.valuationDate = today();
+      mark(id, '평가금액 갱신');
+      toast('평가금액을 저장했습니다. 투자 탭에 바로 반영됩니다.');
+      render();
+    };
+  });
+
+  // 편집 모드: 항목 추가·삭제
+  const addBtn = document.getElementById('addItem');
+  if (addBtn) {
+    addBtn.onclick = () => {
+      const name = document.getElementById('newItemName').value.trim();
+      if (!name) { toast('이름을 넣어주세요.'); return; }
+      ensureOwnList().push({
+        id: `it${Date.now().toString(36)}`, name,
+        kind: document.getElementById('newItemKind').value,
+        hint: document.getElementById('newItemHint').value.trim(),
+        match: name,
+      });
+      touch(); render();
+    };
+  }
+  document.querySelectorAll('[data-delitem]').forEach((b) => {
+    b.onclick = () => {
+      const list = ensureOwnList();
+      const it = list.find((x) => x.id === b.dataset.delitem);
+      if (!confirm(`'${it.name}' 항목을 월말 정리에서 뺄까요? (데이터는 지워지지 않습니다)`)) return;
+      state.data.checklist = list.filter((x) => x.id !== it.id);
+      touch(); render();
+    };
+  });
 }
 
 /* ================= 투자 ================= */
@@ -1023,10 +1325,10 @@ export function settings() {
     <div class="card-head"><h2>화면 구성</h2><span class="muted">이 기기에만 적용됩니다</span></div>
     <label class="field">보이는 탭
       <select id="uiSimple">
-        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (대시보드·투자·대출·리포트·거래내역·입력·설정)</option>
-        <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·거래내역·입력·설정)</option>
+        <option value="full" ${state.ui.simple ? '' : 'selected'}>전체 (월말 정리·투자·대출·리포트 포함)</option>
+        <option value="simple" ${state.ui.simple ? 'selected' : ''}>간단히 (대시보드·입력·거래내역·설정)</option>
       </select></label>
-    <p class="muted">투자·대출·리포트를 안 보는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
+    <p class="muted">월말 정리·투자·대출·리포트를 안 쓰는 가족에게는 '간단히'가 편합니다. 숨겨도 데이터는 그대로 있습니다.</p>
   </div>
 
   <div class="card">
@@ -1240,7 +1542,7 @@ function mountSettings() {
       state.ui.simple = e.target.value === 'simple';
       saveUIState();
       applyTabVisibility();
-      if (state.ui.simple && ['invest', 'loan', 'report'].includes(state.ui.view)) {
+      if (state.ui.simple && ['invest', 'loan', 'report', 'monthly'].includes(state.ui.view)) {
         state.ui.view = 'dashboard';
       }
       render();
@@ -1344,6 +1646,7 @@ const VIEWS = {
   entry: [entry, mountEntry],
   invest: [invest, mountInvest],
   loan: [loanView, mountLoan],
+  monthly: [monthlyView, mountMonthly],
   report: [reportView, mountReport],
   settings: [settings, mountSettings],
 };
@@ -1359,7 +1662,7 @@ export function render() {
 
 /** 간단히 보기일 때 투자·대출·리포트 탭을 숨긴다 */
 export function applyTabVisibility() {
-  const hide = state.ui.simple ? ['invest', 'loan', 'report'] : [];
+  const hide = state.ui.simple ? ['invest', 'loan', 'report', 'monthly'] : [];
   document.querySelectorAll('.tab').forEach((b) => {
     b.style.display = hide.includes(b.dataset.view) ? 'none' : '';
   });
