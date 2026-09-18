@@ -982,7 +982,10 @@ export function settings() {
       ${gd.drive.fileId ? '' : `<details style="margin-top:10px"><summary class="muted">드라이브에 가계부 파일이 아직 없나요?</summary>
         <p class="muted" style="margin-top:8px">이 기기에 있는 거래 ${state.data.transactions.length}건으로 드라이브에 파일을 처음 만듭니다.
           집안에서 한 사람만, 한 번만 하세요. 나머지 사람은 '드라이브 파일 고르기'를 씁니다.</p>
-        <button class="btn" id="gdCreate">드라이브에 처음 올리기</button></details>`}
+        <div class="btn-row">
+          <button class="btn btn-primary" id="gdCreate">폴더 골라서 올리기</button>
+          <button class="btn" id="gdCreateRoot">내 드라이브 맨 위에 올리기</button>
+        </div></details>`}
       <label class="field" style="margin-top:12px">자동 동기화
         <select id="gdAuto">
           <option value="on" ${state.ui.autoSync !== false ? 'selected' : ''}>켜기 (권장)</option>
@@ -1123,7 +1126,7 @@ function mountSettings() {
       const r = await gd.pull({ merge });
       toast(`${f.name} 연결됨. 새 거래 ${r.added || 0}건 받았습니다.`);
     });
-    if (g('gdCreate')) g('gdCreate').onclick = wrap(async () => {
+    const createIn = (withFolder) => wrap(async () => {
       const n = state.data.transactions.length;
       if (!n) {
         toast('지금 앱에 거래가 없습니다. 드라이브에 이미 파일이 있다면 "드라이브 파일 고르기"를 쓰세요.');
@@ -1131,9 +1134,17 @@ function mountSettings() {
       }
       if (!confirm(`지금 이 기기에 있는 거래 ${n}건으로 드라이브에 새 파일을 만듭니다.\n\n`
         + '드라이브에 이미 가계부 파일이 있다면, 취소하고 "드라이브 파일 고르기"를 쓰세요. 파일이 두 개가 되면 헷갈립니다.\n\n계속할까요?')) return;
-      const f = await gd.createFile();
-      toast(`드라이브에 ${f.name}을 만들었습니다. (거래 ${n}건)`);
+      let folder = null;
+      if (withFolder) {
+        folder = await gd.pickFolder();
+        if (!folder) { toast('폴더를 고르지 않아 취소했습니다.'); return; }
+      }
+      const f = await gd.createFile('가계부_데이터.json', folder?.id);
+      if (f.movedToRoot) toast(`'${folder.name}' 폴더에 만들 권한이 없어 내 드라이브 맨 위에 만들었습니다. 드라이브에서 옮기셔도 됩니다.`);
+      else toast(`드라이브${folder ? `의 '${folder.name}' 폴더` : ''}에 ${f.name}을 만들었습니다. (거래 ${n}건)`);
     });
+    if (g('gdCreate')) g('gdCreate').onclick = createIn(true);
+    if (g('gdCreateRoot')) g('gdCreateRoot').onclick = createIn(false);
     if (g('gdPull')) g('gdPull').onclick = wrap(async () => {
       const r = await gd.pull({ merge });
       toast(r.added ? `새 거래 ${r.added}건을 받았습니다.` : '이미 최신입니다.');

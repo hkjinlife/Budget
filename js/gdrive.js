@@ -127,6 +127,35 @@ export async function pickFile() {
   });
 }
 
+/** 드라이브의 폴더를 고른다 (새 파일을 어디에 둘지). 취소하면 null */
+export async function pickFolder() {
+  const tk = await token();
+  await loadScript('https://apis.google.com/js/api.js');
+  await new Promise((res) => gapi.load('picker', res));
+  return new Promise((res) => {
+    const folders = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMimeTypes('application/vnd.google-apps.folder');
+    const picker = new google.picker.PickerBuilder()
+      .setOAuthToken(tk)
+      .setDeveloperKey(CONFIG.googleApiKey)
+      .setLocale('ko')
+      .addView(folders)
+      .setTitle('가계부 파일을 둘 폴더 고르기')
+      .setCallback((data) => {
+        if (data.action === google.picker.Action.PICKED) {
+          const f = data.docs[0];
+          res({ id: f.id, name: f.name });
+        } else if (data.action === google.picker.Action.CANCEL) {
+          res(null);
+        }
+      })
+      .build();
+    picker.setVisible(true);
+  });
+}
+
 function setFile(id, name) {
   drive.fileId = id;
   drive.fileName = name;
@@ -142,21 +171,29 @@ export function restoreFile() {
   return false;
 }
 
-/** 드라이브에 새 파일을 만든다 (처음 시작할 때) */
-export async function createFile(name = '가계부_데이터.json') {
+/** 드라이브에 새 파일을 만든다 (처음 시작할 때). folderId가 있으면 그 폴더 안에 만든다 */
+export async function createFile(name = '가계부_데이터.json', folderId = null) {
   const tk = await token();
-  const meta = { name, mimeType: 'application/json' };
-  const body = new FormData();
-  body.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
-  body.append('file', new Blob([JSON.stringify(state.data, null, 1)], { type: 'application/json' }));
-  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime', {
-    method: 'POST', headers: { Authorization: `Bearer ${tk}` }, body,
-  });
+  const upload = async (parents) => {
+    const meta = { name, mimeType: 'application/json', ...(parents ? { parents } : {}) };
+    const body = new FormData();
+    body.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+    body.append('file', new Blob([JSON.stringify(state.data, null, 1)], { type: 'application/json' }));
+    return fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime,parents', {
+      method: 'POST', headers: { Authorization: `Bearer ${tk}` }, body,
+    });
+  };
+  let r = await upload(folderId ? [folderId] : null);
+  let movedToRoot = false;
+  if (!r.ok && folderId) {          // 폴더에 쓸 권한이 없으면 내 드라이브 맨 위에 만든다
+    r = await upload(null);
+    movedToRoot = true;
+  }
   if (!r.ok) throw new Error(`파일을 만들지 못했습니다 (${r.status})`);
   const f = await r.json();
   setFile(f.id, f.name);
   drive.lastModified = f.modifiedTime;
-  return f;
+  return { ...f, movedToRoot };
 }
 
 /* ---------- 읽기 / 쓰기 ---------- */
