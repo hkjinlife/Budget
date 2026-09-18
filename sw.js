@@ -1,7 +1,7 @@
 // 오프라인 대응.
 // 앱 코드(HTML·CSS·JS)는 "새 것 먼저, 안 되면 캐시" — 업데이트가 바로 반영된다.
 // 라이브러리·아이콘은 "캐시 먼저" — 잘 바뀌지 않고 용량이 크다.
-const CACHE = 'budget-app-v2';
+const CACHE = 'budget-app-v3';
 const SHELL = [
   './',
   './index.html',
@@ -13,6 +13,8 @@ const SHELL = [
   './js/views.js',
   './js/charts.js',
   './js/importers.js',
+  './js/gdrive.js',
+  './js/config.js',
   './vendor/chart.umd.min.js',
   './vendor/xlsx.full.min.js',
   './icons/icon-192.png',

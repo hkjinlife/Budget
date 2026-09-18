@@ -1,17 +1,51 @@
 // 앱 시작점: 데이터 불러오기 → 화면 그리기 → 탭·편집·저장 버튼 연결
-import { state, boot, onChange, save, saveUI } from './store.js';
+import { state, boot, onChange, save, saveUI, applyIncoming } from './store.js';
 import { render, renderUserSwitch, toast } from './views.js';
+import * as gd from './gdrive.js';
 
 const saveState = document.getElementById('saveState');
 const editBtn = document.getElementById('editBtn');
 
 function paintSaveState() {
+  if (gd.drive.busy) {
+    saveState.textContent = gd.drive.status;
+    saveState.className = 'save-state';
+    return;
+  }
   if (state.dirty) {
     saveState.textContent = '저장 안 됨';
     saveState.className = 'save-state dirty';
+  } else if (gd.drive.fileId) {
+    saveState.textContent = '구글 드라이브에 저장됨';
+    saveState.className = 'save-state saved';
   } else {
     saveState.textContent = state.fileHandle ? '공유 폴더 파일에 저장됨' : '브라우저에 임시 저장됨';
     saveState.className = 'save-state saved';
+  }
+}
+
+/* ---------- 구글 드라이브 자동 동기화 ---------- */
+const mergeIncoming = (incoming) => applyIncoming(incoming, { mode: 'merge' });
+let pushTimer = null;
+
+function scheduleDrivePush() {
+  if (!gd.drive.fileId || state.ui.autoSync === false) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    gd.push({ merge: mergeIncoming }).then(render).catch((e) => toast(`드라이브 저장 실패: ${e.message}`));
+  }, 3000);
+}
+
+async function driveStart() {
+  if (!gd.isConfigured() || !gd.restoreFile()) return;
+  try {
+    await gd.connect({ silent: true });
+    const r = await gd.pull({ merge: mergeIncoming });
+    if (r?.added) toast(`드라이브에서 새 거래 ${r.added}건을 받았습니다.`);
+    state.dirty = false;
+    render();
+  } catch {
+    toast('구글 연결이 풀렸습니다. 설정에서 다시 연결해주세요.');
   }
 }
 
@@ -33,6 +67,8 @@ async function start() {
   await boot();
   state.ui.edit = false;          // 열 때는 항상 보기 모드
   onChange(paintSaveState);
+  onChange(() => { if (state.dirty) scheduleDrivePush(); });
+  gd.onDriveChange(paintSaveState);
   renderUserSwitch();
   render();
   paintSaveState();
@@ -54,14 +90,33 @@ async function start() {
   };
 
   document.getElementById('saveBtn').onclick = async () => {
-    try { toast(await save()); } catch (e) { toast(e.message); }
+    try {
+      if (gd.drive.fileId) {
+        clearTimeout(pushTimer);
+        await gd.push({ merge: mergeIncoming });
+        toast('구글 드라이브에 저장했습니다.');
+        render();
+        return;
+      }
+      toast(await save());
+    } catch (e) { toast(e.message); }
   };
+
+  // 앱으로 돌아올 때 드라이브의 최신 내용을 받아온다
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && gd.drive.fileId && !state.dirty
+        && state.ui.autoSync !== false) {
+      gd.pull({ merge: mergeIncoming }).then((r) => { if (r?.added) render(); }).catch(() => {});
+    }
+  });
 
   window.addEventListener('beforeunload', (e) => {
     if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
   });
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => render());
+
+  driveStart();
 
   // 오프라인에서도 열리도록 앱 파일을 캐시에 넣어둔다 (http/https일 때만 동작)
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.__SEED__) {

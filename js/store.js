@@ -195,7 +195,12 @@ export async function exportFile() {
 export async function importFile(file, { mode = 'merge' } = {}) {
   const text = await file.text();
   const incoming = JSON.parse(text);
-  if (!incoming.transactions) throw new Error('가계부 데이터 파일이 아닙니다.');
+  return applyIncoming(incoming, { mode });
+}
+
+/** 다른 기기/드라이브에서 온 데이터를 지금 데이터와 합친다 */
+export function applyIncoming(incoming, { mode = 'merge' } = {}) {
+  if (!incoming || !incoming.transactions) throw new Error('가계부 데이터가 아닙니다.');
 
   if (mode === 'replace' || !state.data?.transactions?.length) {
     state.data = incoming;

@@ -1,8 +1,9 @@
 // 화면 렌더링. 각 함수는 HTML 문자열을 만들고, mount()에서 이벤트를 붙인다.
-import { state, touch, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback } from './store.js';
+import { state, touch, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
 import * as M from './model.js';
 import { monthlyChart, categoryChart, investChart, loanChart } from './charts.js';
 import { parseFile, reconcile } from './importers.js';
+import * as gd from './gdrive.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const toast = (msg) => {
@@ -897,6 +898,33 @@ export function settings() {
   </div>
 
   <div class="card">
+    <div class="card-head"><h2>구글 드라이브 자동 동기화</h2>
+      <span class="muted">${esc(gd.drive.status)}</span></div>
+    ${gd.isConfigured() ? `
+      <p class="muted">${gd.drive.fileId
+    ? `연결된 파일: <b>${esc(gd.drive.fileName || '가계부_데이터.json')}</b> — 고치면 3초 뒤 자동 저장되고, 앱을 열 때 최신 내용을 받아옵니다.`
+    : '드라이브에 있는 가계부 파일을 고르면 자동 동기화가 시작됩니다.'}</p>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn btn-primary" id="gdConnect">구글 연결</button>
+        <button class="btn" id="gdPick">드라이브 파일 고르기</button>
+        <button class="btn" id="gdCreate">새 파일 만들기</button>
+        ${gd.drive.fileId ? '<button class="btn" id="gdPull">지금 불러오기</button><button class="btn" id="gdPush">지금 저장</button>' : ''}
+        ${gd.drive.fileId ? '<button class="btn btn-quiet" id="gdForget">연결 끊기</button>' : ''}
+      </div>
+      <label class="field" style="margin-top:12px">자동 동기화
+        <select id="gdAuto">
+          <option value="on" ${state.ui.autoSync !== false ? 'selected' : ''}>켜기 (권장)</option>
+          <option value="off" ${state.ui.autoSync === false ? 'selected' : ''}>끄기 — 저장 버튼을 눌렀을 때만</option>
+        </select></label>
+    ` : `
+      <p class="muted">아직 구글 연동 설정이 없습니다. 구글 클라우드 콘솔에서 받은 값을 넣어주세요. (README의 '구글 드라이브 연동' 참고)</p>
+      <label class="field">클라이언트 ID<input id="gdClientId" placeholder="1234-abcd.apps.googleusercontent.com"></label>
+      <label class="field">API 키<input id="gdApiKey" placeholder="AIzaSy..."></label>
+      <div class="btn-row"><button class="btn btn-primary" id="gdSaveCfg">저장하고 연결</button></div>
+    `}
+  </div>
+
+  <div class="card">
     <h2>데이터 파일</h2>
     <p class="muted">가계 데이터는 JSON 파일 하나로 관리합니다. iCloud나 구글드라이브 공유 폴더에 두면 아내분과 같이 볼 수 있습니다.</p>
     <div class="btn-row" style="margin-top:10px">
@@ -982,6 +1010,53 @@ export function settings() {
 
 function mountSettings() {
   const g = (id) => document.getElementById(id);
+  const merge = (incoming) => applyIncoming(incoming, { mode: 'merge' });
+  const wrap = (fn) => async () => {
+    try { await fn(); render(); } catch (e) { toast(e.message); }
+  };
+
+  if (g('gdSaveCfg')) {
+    g('gdSaveCfg').onclick = () => {
+      const cfg = { googleClientId: g('gdClientId').value.trim(), googleApiKey: g('gdApiKey').value.trim() };
+      if (!cfg.googleClientId || !cfg.googleApiKey) { toast('두 값을 모두 넣어주세요.'); return; }
+      try { localStorage.setItem('budget.gdrive.config', JSON.stringify(cfg)); } catch { /* 무시 */ }
+      toast('저장했습니다. 화면을 새로고침합니다.');
+      setTimeout(() => location.reload(), 800);
+    };
+  }
+  if (g('gdConnect')) {
+    g('gdConnect').onclick = wrap(async () => { await gd.connect(); toast('구글에 연결했습니다.'); });
+    g('gdPick').onclick = wrap(async () => {
+      const f = await gd.pickFile();
+      if (!f) return;
+      const r = await gd.pull({ merge });
+      toast(`${f.name} 연결됨. 새 거래 ${r.added || 0}건 받았습니다.`);
+    });
+    g('gdCreate').onclick = wrap(async () => {
+      const f = await gd.createFile();
+      toast(`드라이브에 ${f.name}을 만들었습니다.`);
+    });
+    if (g('gdPull')) g('gdPull').onclick = wrap(async () => {
+      const r = await gd.pull({ merge });
+      toast(r.added ? `새 거래 ${r.added}건을 받았습니다.` : '이미 최신입니다.');
+    });
+    if (g('gdPush')) g('gdPush').onclick = wrap(async () => {
+      await gd.push({ merge });
+      toast('드라이브에 저장했습니다.');
+    });
+    if (g('gdForget')) g('gdForget').onclick = wrap(async () => {
+      gd.signOut();
+      try { localStorage.removeItem('budget.gdrive.file'); } catch { /* 무시 */ }
+      gd.drive.fileId = null;
+      toast('연결을 끊었습니다.');
+    });
+    if (g('gdAuto')) g('gdAuto').onchange = (e) => {
+      state.ui.autoSync = e.target.value === 'on';
+      saveUIState();
+      toast(state.ui.autoSync ? '자동 동기화를 켰습니다.' : '자동 동기화를 껐습니다.');
+    };
+  }
+
 
   // 피드백은 보기 모드에서도 남길 수 있다
   g('fbAdd').onclick = () => {
