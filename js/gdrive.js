@@ -98,15 +98,21 @@ export async function pickFile() {
   await loadScript('https://apis.google.com/js/api.js');
   await new Promise((res) => gapi.load('picker', res));
   return new Promise((res) => {
-    const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+    // 내 드라이브 + 공유받은 파일(아내·가족이 여기서 찾는다)을 탭으로 나눠 보여준다
+    const mine = new google.picker.DocsView(google.picker.ViewId.DOCS)
       .setMimeTypes('application/json')
       .setIncludeFolders(true)
       .setSelectFolderEnabled(false);
+    const shared = new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setMimeTypes('application/json')
+      .setOwnedByMe(false);
     const picker = new google.picker.PickerBuilder()
       .setOAuthToken(tk)
       .setDeveloperKey(CONFIG.googleApiKey)
-      .addView(view)
-      .setTitle('가계부 데이터 파일 고르기')
+      .setLocale('ko')
+      .addView(mine)
+      .addView(shared)
+      .setTitle('가계부_데이터.json 고르기')
       .setCallback((data) => {
         if (data.action === google.picker.Action.PICKED) {
           const doc = data.docs[0];
