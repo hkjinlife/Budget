@@ -245,3 +245,10 @@ details.fold > summary h2 { margin: 0; }
 details.fold > summary h2::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--text-muted); transition: transform .15s; }
 details.fold[open] > summary h2::before { transform: rotate(90deg); }
 details.fold[open] > summary { margin-bottom: 10px; }
+
+/* 투자 탭 요약 칸: 자산이 많고 금액이 길어서 조금 작게 (원 글자가 다음 줄로 넘어가지 않게) */
+.grid.assets { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.grid.assets .value { font-size: 19px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .grid.assets .tile:first-child { grid-column: 1 / -1; }   /* 폰에서는 '전체 자산'을 한 줄 전체로 */
+}

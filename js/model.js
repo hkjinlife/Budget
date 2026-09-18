@@ -146,7 +146,7 @@ export function investSummary() {
   return { groups, fx, fund, total };
 }
 
-export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인 (업비트)', etc: '기타' };
+export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', etc: '기타' };
 
 
 /* ---------- 대출 ---------- */

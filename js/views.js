@@ -1055,21 +1055,50 @@ function mountMonthly() {
 }
 
 /* ================= 투자 ================= */
-export function invest() {
+/** 투자(전북·비트코인)와 기타 자산(아파트·연금 등)을 한 목록으로 모은다.
+ *  위 요약 칸·그래프·표가 모두 이 목록을 써서, 자산을 추가하면 세 곳에 함께 나타난다 */
+function assetSummary() {
   const s = M.investSummary();
+  const withRate = (o) => ({ ...o, profit: o.value - o.principal, rate: o.principal ? (o.value - o.principal) / o.principal : null });
+  const short = (name) => String(name || '').replace(/\s*\(.*?\)\s*/g, ' ').trim();   // 그래프 이름은 괄호를 뺀다
+  const items = [];     // { label, chart(그래프 이름, 없으면 요약 칸에만), value, principal, profit, rate, noPrincipal }
+  if (s.groups.jeonbuk) items.push({ label: M.GROUP_NAMES.jeonbuk, ...s.groups.jeonbuk });
+  if (s.fund) items.push({ label: '└ 펀드', chart: '펀드', ...s.fund });
+  if (s.fx) items.push({ label: '└ 외화예금', chart: '외화예금', ...s.fx });
+  Object.entries(s.groups).forEach(([k, g]) => {
+    if (k === 'jeonbuk') return;
+    const name = M.GROUP_NAMES[k] || k;
+    items.push({ label: name, chart: short(name), ...g });
+  });
+  (state.data.otherAssets || []).forEach((a) => {
+    const value = Number(a.value) || 0;
+    const principal = Number(a.principal) || 0;
+    // 원금을 모르면 손익을 셀 수 없으니 평가금액을 원금으로 본다 (전체 손익이 부풀지 않게)
+    items.push({ label: a.name, chart: short(a.name), ...withRate({ value, principal: principal || value }), noPrincipal: !principal });
+  });
+  const total = withRate({
+    value: s.total.value + (state.data.otherAssets || []).reduce((t, a) => t + (Number(a.value) || 0), 0),
+    principal: s.total.principal + (state.data.otherAssets || [])
+      .reduce((t, a) => t + (Number(a.principal) || Number(a.value) || 0), 0),
+  });
+  return { s, items, total };
+}
+
+/** 기타 자산의 구분 (이름으로 짐작) */
+const otherKind = (name) => (/청약/.test(name) ? '청약' : /연금/.test(name) ? '연금'
+  : /보험|변액/.test(name) ? '보험' : /아파트|부동산|주택|오피스텔|토지/.test(name) ? '부동산' : '기타');
+
+export function invest() {
+  const { items, total } = assetSummary();
   const inv = state.data.investment;
-  const g = (k) => s.groups[k] || { principal: 0, value: 0, profit: 0, rate: null };
-  const tile = (label, o, sub) => `<div class="tile"><div class="label">${label}</div>
+  const tile = (label, o) => `<div class="tile"><div class="label">${esc(label)}</div>
     <div class="value">${M.won(o.value)}</div>
-    <div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원</div>
-    ${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+    ${o.noPrincipal ? '<div class="sub muted">원금 기록 없음</div>'
+    : `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원</div>`}</div>`;
   return `
-  <div class="grid" style="margin-bottom:14px">
-    ${tile('전체', s.total)}
-    ${tile('전북은행 (펀드+외화)', g('jeonbuk'))}
-    ${s.fund ? tile('└ 펀드', s.fund) : ''}
-    ${s.fx ? tile('└ 외화예금', s.fx) : ''}
-    ${s.groups.crypto ? tile('비트코인', g('crypto')) : ''}
+  <div class="grid assets" style="margin-bottom:14px">
+    ${tile('전체 자산', total)}
+    ${items.map((o) => tile(o.label, o)).join('')}
   </div>
 
   <div class="card">
@@ -1079,32 +1108,16 @@ export function invest() {
 
   <div class="card">
     <div class="card-head"><h2>보유 자산 — 평가금액</h2>
-      ${editable() ? '<button class="btn" id="addHolding">+ 자산 추가</button>' : ''}</div>
+      ${editable() ? `<div class="btn-row"><button class="btn" id="addOther">+ 자산 추가</button>
+        <button class="btn btn-quiet" id="addHolding">+ 전북·비트코인 계좌에 추가</button></div>` : ''}</div>
     ${editable() ? '' : lockNote('평가금액')}
     <div class="table-wrap"><table>
-      <thead><tr><th>자산</th><th>계좌</th><th>구분</th><th class="num">평가금액</th>${editable() ? '<th></th>' : ''}</tr></thead>
+      <thead><tr><th>자산</th><th>구분</th><th>계좌·메모</th><th class="num">원금</th><th class="num">평가금액</th>
+        <th class="num">${editable() ? '' : '손익'}</th></tr></thead>
       <tbody id="holdBody"></tbody></table></div>
-    ${editable() ? '<p class="muted" style="margin-top:8px">평가금액만 바꾸면 위 성과가 바로 다시 계산됩니다.</p>' : ''}
+    ${editable() ? `<p class="muted" style="margin-top:8px">전북·비트코인의 원금은 아래 '원금 입금·출금 내역'으로 계산합니다.
+      그 밖의 자산은 여기 원금 칸에 적으세요. 매달 금액은 월말 정리에서 넣는 게 편합니다.</p>` : ''}
   </div>
-
-  ${(state.data.otherAssets || []).length || editable() ? `<div class="card">
-    <div class="card-head"><h2>기타 자산</h2>
-      ${editable() ? '<button class="btn" id="addOther">+ 자산 추가</button>' : '<span class="muted">부동산·연금·청약·보험 등</span>'}</div>
-    ${editable() ? '' : lockNote('자산 금액')}
-    <div class="table-wrap"><table><thead><tr><th>자산</th><th class="num">평가</th><th class="num">취득·원금</th><th class="num">손익</th><th>메모</th>${editable() ? '<th></th>' : ''}</tr></thead>
-    <tbody>${(state.data.otherAssets || []).map((a, i) => (editable() ? `<tr data-other="${i}">
-        <td><input data-f="name" value="${esc(a.name)}" style="min-width:160px"></td>
-        <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${a.value || 0}" style="min-width:120px;text-align:right"></td>
-        <td class="num"><input data-f="principal" type="number" inputmode="numeric" value="${a.principal || 0}" style="min-width:120px;text-align:right"></td>
-        <td class="num muted">${a.principal ? M.won((a.value || 0) - a.principal, { sign: true }) : '-'}</td>
-        <td><input data-f="memo" value="${esc(a.memo || '')}" style="min-width:120px"></td>
-        <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
-    : `<tr><td>${esc(a.name)}</td><td class="num">${M.won(a.value)}</td>
-        <td class="num">${M.won(a.principal)}</td>
-        <td class="num ${(a.value || 0) - (a.principal || 0) >= 0 ? 'pos' : 'neg'}">${a.principal ? `${M.won((a.value || 0) - a.principal, { sign: true })} (${M.pct(((a.value || 0) - a.principal) / a.principal)})` : '-'}</td>
-        <td>${esc(a.memo || '')}${a.updatedAt ? ` <span class="muted">${esc(a.updatedAt.slice(5))}</span>` : ''}</td></tr>`)).join('')}</tbody></table></div>
-    ${editable() ? '<p class="muted" style="margin-top:8px">매달 금액은 월말 정리에서 넣는 게 편합니다. 여기서는 이름·원금을 고치거나 새 자산을 추가할 때 쓰세요.</p>' : ''}
-  </div>` : ''}
 
   <details class="card fold" id="flowFold" ${state.ui.flowsOpen ? 'open' : ''}>
     <summary><h2>원금 입금·출금 내역</h2><span class="muted">${(inv.flows || []).length}건</span></summary>
@@ -1121,30 +1134,79 @@ function mountInvest() {
   // 원금 내역은 길어지므로 접어 두고, 펼친 상태는 기억한다 (편집하다 다시 그려도 그대로)
   const fold = document.getElementById('flowFold');
   if (fold) fold.ontoggle = () => { state.ui.flowsOpen = fold.open; saveUIState(); };
-  const s = M.investSummary();
-  const rows = [];
-  if (s.fund) rows.push({ name: '펀드', ...s.fund });
-  if (s.fx) rows.push({ name: '외화예금', ...s.fx });
-  if (s.groups.crypto) rows.push({ name: '비트코인', ...s.groups.crypto });
-  investChart(document.getElementById('chartInvest'), rows);
+  const { s, items } = assetSummary();
+  investChart(document.getElementById('chartInvest'), items.filter((o) => o.chart).map((o) => ({ ...o, name: o.chart })));
 
   const groupOpts = (sel) => Object.entries(M.GROUP_NAMES)
     .map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(v)}</option>`).join('');
-
-  const drawHold = () => {
-    const ed = editable();
-    document.getElementById('holdBody').innerHTML = inv.holdings.map((h, i) => (ed ? `
-      <tr data-i="${i}">
-        <td><input data-f="name" value="${esc(h.name)}" style="min-width:180px"></td>
-        <td><input data-f="account" value="${esc(h.account || '')}" style="min-width:120px"></td>
-        <td><select data-f="group">${groupOpts(h.group)}</select></td>
-        <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${h.value}" style="min-width:120px;text-align:right"></td>
-        <td><button class="btn btn-quiet" data-f="del">✕</button></td>
-      </tr>` : `
-      <tr><td style="white-space:normal;min-width:180px">${esc(h.name)}</td><td>${esc(h.account || '')}</td>
-        <td>${esc(M.GROUP_NAMES[h.group] || h.group)}</td><td class="num">${M.won(h.value)}</td></tr>`)).join('');
-    if (ed) bind('holdBody', inv.holdings, drawHold);
+  const profitCell = (o) => (o && o.principal
+    ? `<td class="num ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)})</td>`
+    : '<td class="num muted">-</td>');
+  // 전북·비트코인 보유: 원금은 묶음(펀드 전체·외화·비트코인) 단위로만 안다
+  const holdingResult = (h) => {
+    if (h.kind === 'fx') return s.fx;
+    const same = inv.holdings.filter((x) => (x.group || 'jeonbuk') === (h.group || 'jeonbuk'));
+    return same.length === 1 ? s.groups[h.group || 'jeonbuk'] : null;
   };
+
+  const draw = () => {
+    const ed = editable();
+    const others = state.data.otherAssets || [];
+    document.getElementById('holdBody').innerHTML = inv.holdings.map((h, i) => {
+      const r = holdingResult(h);
+      return ed ? `<tr data-hold-i="${i}">
+        <td><input data-f="name" value="${esc(h.name)}" style="min-width:170px"></td>
+        <td><select data-f="group">${groupOpts(h.group)}</select></td>
+        <td><input data-f="account" value="${esc(h.account || '')}" style="min-width:120px"></td>
+        <td class="num muted">원금 내역</td>
+        <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${h.value}" style="min-width:120px;text-align:right"></td>
+        <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
+        : `<tr><td style="white-space:normal;min-width:160px">${esc(h.name)}</td>
+        <td>${esc(M.GROUP_NAMES[h.group] || h.group)}</td><td>${esc(h.account || '')}</td>
+        <td class="num">${r ? M.won(r.principal) : '<span class="muted">-</span>'}</td>
+        <td class="num">${M.won(h.value)}</td>${profitCell(r)}</tr>`;
+    }).join('') + others.map((a, i) => {
+      const o = { principal: Number(a.principal) || 0, value: Number(a.value) || 0 };
+      o.profit = o.value - o.principal;
+      o.rate = o.principal ? o.profit / o.principal : null;
+      return ed ? `<tr data-other-i="${i}">
+        <td><input data-f="name" value="${esc(a.name)}" style="min-width:170px"></td>
+        <td class="muted">${otherKind(a.name)}</td>
+        <td><input data-f="memo" value="${esc(a.memo || '')}" style="min-width:120px"></td>
+        <td class="num"><input data-f="principal" type="number" inputmode="numeric" value="${o.principal}" style="min-width:120px;text-align:right"></td>
+        <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${o.value}" style="min-width:120px;text-align:right"></td>
+        <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
+        : `<tr><td style="white-space:normal;min-width:160px">${esc(a.name)}</td><td>${otherKind(a.name)}</td>
+        <td>${esc(a.memo || '')}${a.updatedAt ? ` <span class="muted">${esc(a.updatedAt.slice(5))}</span>` : ''}</td>
+        <td class="num">${o.principal ? M.won(o.principal) : '<span class="muted">-</span>'}</td>
+        <td class="num">${M.won(o.value)}</td>${profitCell(o)}</tr>`;
+    }).join('');
+    if (!ed) return;
+    // 고치면 위 요약·그래프도 다시 계산하도록 탭을 다시 그린다
+    document.querySelectorAll('#holdBody tr').forEach((tr) => {
+      const isHold = tr.dataset.holdI !== undefined;
+      const arr = isHold ? inv.holdings : state.data.otherAssets;
+      const idx = Number(isHold ? tr.dataset.holdI : tr.dataset.otherI);
+      const obj = arr[idx];
+      tr.querySelectorAll('[data-f]').forEach((el) => {
+        const f = el.dataset.f;
+        if (f === 'del') {
+          el.onclick = () => {
+            if (!confirm(`'${obj.name}'을(를) 지울까요?`)) return;
+            arr.splice(idx, 1);
+            touch(); render();
+          };
+          return;
+        }
+        el.onchange = () => {
+          obj[f] = el.type === 'number' ? Number(el.value) || 0 : el.value;
+          if (!isHold && f === 'value') obj.updatedAt = today();
+          touch(); render();
+        };
+      });
+    });
+  };
+
   const drawFlow = () => {
     const ed = editable();
     const list = [...inv.flows].sort((a, b) => a.date.localeCompare(b.date));
@@ -1164,81 +1226,40 @@ function mountInvest() {
         <td class="num ${f.amount < 0 ? 'neg' : ''}">${M.won(f.amount, { sign: true })}</td>
         <td>${f.include !== false ? '○' : '<span class="muted">제외</span>'}</td>
         <td style="white-space:normal;max-width:220px"><span class="muted">${esc(f.note || '')}</span></td></tr>`)).join('');
-    if (ed) bind('flowBody', inv.flows, drawFlow);
-  };
-  function bind(bodyId, arr, redraw) {
-    document.querySelectorAll(`#${bodyId} tr`).forEach((tr) => {
-      const obj = arr[Number(tr.dataset.i)];
+    if (!ed) return;
+    document.querySelectorAll('#flowBody tr').forEach((tr) => {
+      const obj = inv.flows[Number(tr.dataset.i)];
       tr.querySelectorAll('[data-f]').forEach((el) => {
         const f = el.dataset.f;
         if (f === 'del') {
-          el.onclick = () => { if (confirm('이 줄을 지울까요?')) { arr.splice(Number(tr.dataset.i), 1); touch(); redraw(); refreshInvest(); } };
+          el.onclick = () => { if (confirm('이 줄을 지울까요?')) { inv.flows.splice(Number(tr.dataset.i), 1); touch(); render(); } };
         } else if (el.type === 'checkbox') {
-          el.onchange = () => { obj[f] = el.checked; touch(); refreshInvest(); };
+          el.onchange = () => { obj[f] = el.checked; touch(); render(); };
         } else {
-          el.onchange = () => {
-            obj[f] = el.type === 'number' ? Number(el.value) : el.value;
-            touch(); refreshInvest();
-          };
+          el.onchange = () => { obj[f] = el.type === 'number' ? Number(el.value) : el.value; touch(); render(); };
         }
       });
     });
-  }
-  function refreshInvest() {
-    const s2 = M.investSummary();
-    const rows2 = [];
-    if (s2.fund) rows2.push({ name: '펀드', ...s2.fund });
-    if (s2.fx) rows2.push({ name: '외화예금', ...s2.fx });
-    if (s2.groups.crypto) rows2.push({ name: '비트코인', ...s2.groups.crypto });
-    investChart(document.getElementById('chartInvest'), rows2);
-    document.querySelectorAll('.grid .tile').forEach((el, i) => {
-      const order = [s2.total, s2.groups.jeonbuk, s2.fund, s2.fx, s2.groups.crypto].filter(Boolean);
-      const o = order[i];
-      if (!o) return;
-      el.querySelector('.value').textContent = M.won(o.value);
-      const sub = el.querySelector('.sub');
-      sub.textContent = `${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원`;
-      sub.className = `sub ${o.profit >= 0 ? 'pos' : 'neg'}`;
-    });
-  }
-  if (editable()) document.getElementById('addHolding').onclick = () => {
-    inv.holdings.push({ name: '새 자산', account: '', group: 'jeonbuk', value: 0, kind: 'fund' });
-    touch(); drawHold(); refreshInvest();
   };
-  if (editable()) document.getElementById('addFlow').onclick = () => {
-    inv.flows.push({ date: today(), amount: 0, group: 'jeonbuk', include: true, memo: '직접 입력', note: '' });
-    touch(); drawFlow(); refreshInvest();
-  };
-  drawHold(); drawFlow();
 
-  // 기타 자산 편집
-  document.querySelectorAll('[data-other]').forEach((tr) => {
-    const a = state.data.otherAssets[Number(tr.dataset.other)];
-    tr.querySelectorAll('[data-f]').forEach((el) => {
-      const f = el.dataset.f;
-      if (f === 'del') {
-        el.onclick = () => {
-          if (!confirm(`'${a.name}'을(를) 지울까요?`)) return;
-          state.data.otherAssets.splice(Number(tr.dataset.other), 1);
-          touch(); render();
-        };
-      } else {
-        el.onchange = () => {
-          a[f] = el.type === 'number' ? Number(el.value) || 0 : el.value;
-          if (f === 'value') a.updatedAt = today();
-          touch(); render();
-        };
-      }
-    });
-  });
-  const addOther = document.getElementById('addOther');
-  if (addOther) addOther.onclick = () => {
-    state.data.otherAssets ||= [];
-    state.data.otherAssets.push({ name: '새 자산', value: 0, principal: 0, memo: '', updatedAt: today() });
-    touch(); render();
-  };
+  if (editable()) {
+    document.getElementById('addOther').onclick = () => {
+      state.data.otherAssets ||= [];
+      state.data.otherAssets.push({ name: '새 자산', value: 0, principal: 0, memo: '', updatedAt: today() });
+      touch(); render();
+    };
+    document.getElementById('addHolding').onclick = () => {
+      inv.holdings.push({ name: '새 보유', account: '', group: 'jeonbuk', value: 0, kind: 'fund' });
+      touch(); render();
+    };
+    document.getElementById('addFlow').onclick = () => {
+      inv.flows.push({ date: today(), amount: 0, group: 'jeonbuk', include: true, memo: '직접 입력', note: '' });
+      state.ui.flowsOpen = true;
+      touch(); render();
+    };
+  }
+  draw(); drawFlow();
 }
-
 
 /* ================= 대출 ================= */
 export function loanView() {
