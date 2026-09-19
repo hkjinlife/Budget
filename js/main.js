@@ -1,6 +1,6 @@
 // 앱 시작점: 데이터 불러오기 → 화면 그리기 → 탭·편집·저장 버튼 연결
 import { state, boot, onChange, save, saveUI, applyIncoming } from './store.js';
-import { render, renderUserSwitch, toast } from './views.js';
+import { render, renderUserSwitch, resetTab, toast } from './views.js';
 import * as gd from './gdrive.js';
 
 const saveState = document.getElementById('saveState');
@@ -92,6 +92,8 @@ async function start() {
   }
   await boot();
   state.ui.edit = false;          // 열 때는 항상 보기 모드
+  // 열 때는 각 탭을 처음 화면(이번 달)으로. 가계부 입력 중이었으면 그대로 둔다 (다른 앱에 다녀와 새로 열려도 적던 내용이 남게)
+  ['entry', 'dashboard', 'report', 'transactions'].filter((v) => !(v === 'entry' && state.ui.view === 'entry')).forEach(resetTab);
   onChange(paintSaveState);
   onChange(() => { if (state.dirty) scheduleDrivePush(); });
   gd.onDriveChange(paintSaveState);
@@ -108,6 +110,7 @@ async function start() {
     if (!b) return;
     state.ui.view = b.dataset.view;
     state.ui.fromDash = false;
+    resetTab(b.dataset.view);       // 탭을 누르면 늘 처음 화면 (가계부는 달력, 나머지는 이번 달)
     saveUI();
     render();
   });
