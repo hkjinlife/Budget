@@ -274,7 +274,7 @@ function normalize(d) {
 export function today() { return new Date().toISOString().slice(0, 10); }
 
 export function latestMonth() {
-  const ms = state.data.transactions.map((t) => t.date.slice(0, 7)).sort();
+  const ms = state.data.transactions.filter((t) => !t.deleted).map((t) => t.date.slice(0, 7)).sort();
   return ms.length ? ms[ms.length - 1] : today().slice(0, 7);
 }
 
@@ -440,9 +440,9 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
     const ours = same.mt || '';
     const useTheirs = (theirs || ours) ? theirs > ours : newer;
     if (!useTheirs) return;
-    if (same.categoryId !== t.categoryId || same.type !== t.type
+    if (same.categoryId !== t.categoryId || same.type !== t.type || !!same.deleted !== !!t.deleted
       || !!same.excluded !== !!t.excluded || (same.memo || '') !== (t.memo || '')) {
-      Object.assign(same, { categoryId: t.categoryId, type: t.type, excluded: t.excluded, memo: t.memo });
+      Object.assign(same, { categoryId: t.categoryId, type: t.type, excluded: t.excluded, memo: t.memo, deleted: t.deleted });
       if (t.mt) same.mt = t.mt;
       updated += 1;
     }
@@ -516,25 +516,41 @@ export function dedupKey(t) {
   return [t.date, t.accountId || '', (t.merchant || '').replace(/\s+/g, ''), t.amount].join('|');
 }
 
-export function existingKeys() {
-  return new Set(state.data.transactions.map(dedupKey));
-}
-
 /** checked: reconcile로 이미 건수까지 중복을 가려낸 목록 — 같은 날 같은 거래가 여러 건이어도 모두 넣는다 */
 export function addTransactions(list, { checked = false } = {}) {
-  const seen = checked ? null : existingKeys();
+  const seen = checked ? null : new Set(state.data.transactions.filter((t) => !t.deleted).map(dedupKey));
+  // 지운 거래와 똑같은 것을 다시 넣으면 새 줄 대신 지운 줄을 되살린다.
+  // 새 줄을 만들면 다른 기기에서 지운 줄과 짝지어져 다시 사라지기 때문
+  const gone = new Map();
+  if (seen) {
+    state.data.transactions.filter((t) => t.deleted).forEach((t) => {
+      const k = dedupKey(t);
+      if (!gone.has(k)) gone.set(k, []);
+      gone.get(k).push(t);
+    });
+  }
   const added = [];
+  const fresh = [];
   const dup = [];
   list.forEach((t) => {
     if (seen) {
       const k = dedupKey(t);
       if (seen.has(k)) { dup.push(t); return; }
       seen.add(k);
+      const old = gone.get(k)?.shift();
+      if (old) {
+        Object.assign(old, t, { id: old.id });
+        delete old.deleted;
+        markEdited(old);
+        added.push(old);
+        return;
+      }
     }
     t.id ||= `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
     added.push(t);
+    fresh.push(t);
   });
-  state.data.transactions.push(...added);
+  state.data.transactions.push(...fresh);
   state.data.transactions.sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   if (added.length) touch();
   return { added, dup };
@@ -584,7 +600,8 @@ export async function forgetDevice() {
   state.fileHandle = null;
 }
 
+/** 지운 거래는 줄을 없애지 않고 deleted 표시만 한다. 줄을 없애면 다른 기기와 합칠 때 되살아나기 때문 */
 export function removeTransaction(id) {
-  const i = state.data.transactions.findIndex((t) => t.id === id);
-  if (i >= 0) { state.data.transactions.splice(i, 1); touch(); }
+  const t = state.data.transactions.find((x) => x.id === id);
+  if (t && !t.deleted) { t.deleted = true; markEdited(t); touch(); }
 }

@@ -487,7 +487,9 @@ export async function parseFile(file) {
 
 /** 파일 내용과 앱에 이미 있는 내역을 대조한다 */
 export function reconcile(parsed) {
-  const existing = state.data.transactions;
+  // 지운 카드 거래는 파일을 다시 올려도 되살리지 않는다. 지운 직접 입력은 카드 파일을 막지 않는다
+  const existing = state.data.transactions.filter((t) => !(t.deleted && t.source === 'manual'));
+  const live = existing.filter((t) => !t.deleted);
   const dates = parsed.rows.map((r) => r.date).sort();
   const range = { from: dates[0], to: dates[dates.length - 1] };
 
@@ -506,10 +508,10 @@ export function reconcile(parsed) {
     if (same?.length) { matched.add(same.pop()); dup.push(r); } else exact.push(r);
   });
 
-  // 형식이 다른 파일로 이미 넣은 같은 거래 (예: 실시간 이용내역 ↔ 명세서). 가게 이름 표기가 달라서
-  // 같은 카드·같은 금액·날짜 3일 안(환불은 7일, 해외결제는 환율 때문에 금액 3% 안)이면 같은 거래로 본다.
+  // 형식이 다른 파일로 이미 넣은 같은 거래 (예: 실시간 이용내역 ↔ 명세서), 또는 카드를 골라 직접 입력한 거래.
+  // 가게 이름 표기가 달라서 같은 카드·같은 금액·날짜 3일 안(환불은 7일, 해외결제는 환율 때문에 금액 3% 안)이면 같은 거래로 본다.
   const FX = /,(USD|KRW|EUR|JPY|GBP|CNY):/;
-  const others = existing.filter((t) => !matched.has(t) && t.accountId && /^import:/.test(t.source || ''));
+  const others = existing.filter((t) => !matched.has(t) && t.accountId && /^(import:|manual$)/.test(t.source || ''));
   const fresh = [];
   let similar = 0;
   exact.forEach((r) => {
@@ -540,7 +542,7 @@ export function reconcile(parsed) {
     return m;
   };
   const fileGroups = group(parsed.rows);
-  const appGroups = group(existing.filter((t) => t.type === 'expense'
+  const appGroups = group(live.filter((t) => t.type === 'expense'
     && t.date >= range.from && t.date <= range.to));
   const mismatched = [];
   fileGroups.forEach((fileRows, key) => {
@@ -555,13 +557,13 @@ export function reconcile(parsed) {
 
   // 파일 기간 안에 앱에만 있는 거래 (파일에서 빠졌거나, 직접 입력한 건)
   const accounts = new Set(parsed.rows.map((r) => r.accountId).filter(Boolean));
-  const onlyInApp = existing.filter((t) => t.type === 'expense'
+  const onlyInApp = live.filter((t) => t.type === 'expense'
     && t.date >= range.from && t.date <= range.to
     && (accounts.size ? accounts.has(t.accountId) : true)
     && !matched.has(t));
 
   const note = similar
-    ? `다른 형식의 파일(예: 실시간 이용내역)로 이미 넣은 거래 ${similar}건은 같은 카드·같은 금액·3일 안이라 같은 거래로 보고 건너뜁니다.`
+    ? `다른 형식의 파일(예: 실시간 이용내역)로 넣었거나 직접 입력한 거래 ${similar}건은 같은 카드·같은 금액·3일 안이라 같은 거래로 보고 건너뜁니다.`
     : '';
   return { fresh, dup, similar, mismatched, onlyInApp, range, note, skipped: parsed.skipped || [] };
 }

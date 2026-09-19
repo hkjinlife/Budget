@@ -50,11 +50,11 @@ export function guessCategory(merchant) {
 /** 사용자 필터 적용 */
 export function visibleTx() {
   const u = state.ui.user;
-  return state.data.transactions.filter((t) => u === 'all' || t.owner === u);
+  return state.data.transactions.filter((t) => !t.deleted && (u === 'all' || t.owner === u));
 }
 
 export function months() {
-  const s = new Set(state.data.transactions.map((t) => t.date.slice(0, 7)));
+  const s = new Set(state.data.transactions.filter((t) => !t.deleted).map((t) => t.date.slice(0, 7)));
   return [...s].sort();
 }
 
@@ -101,7 +101,7 @@ export function categoryTotalsFor(month, txs = visibleTx()) {
 /** 평균을 낼 만한 '온전한 달' — 카드 상세가 있는 달만 */
 export function fullMonths() {
   const counts = new Map();
-  state.data.transactions.filter((t) => t.accountId?.includes('card')).forEach((t) => {
+  state.data.transactions.filter((t) => !t.deleted && t.accountId?.includes('card')).forEach((t) => {
     const mo = t.date.slice(0, 7);
     counts.set(mo, (counts.get(mo) || 0) + 1);
   });

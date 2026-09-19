@@ -17,6 +17,8 @@ export const toast = (msg) => {
 const monthLabel = (mo) => `${Number(mo.slice(5, 7))}월`;
 const catOptions = (sel) => M.categories().map((c) =>
   `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+// 나간 돈은 그대로, 들어온 돈(수입·환불)은 +를 붙여 보여준다
+const txAmt = (t) => (t.amount > 0 ? M.won(t.amount, { sign: true }) : M.won(-t.amount));
 const TYPES = { expense: '소비', income: '수입', transfer: '계좌이체', investment: '투자', card_payment: '카드대금' };
 const editable = () => !!state.ui.edit;
 const lockNote = (what) => `<div class="notice">지금은 <b>보기 모드</b>입니다. ${what}을 고치려면 위쪽 <b>편집</b> 버튼을 누르세요.</div>`;
@@ -152,11 +154,11 @@ export function dashboard() {
     <div class="tile"><div class="label">${monthLabel(cur)} 소비 (일회성 제외)</div>
       <div class="value">${M.won(spend)}</div>
       <div class="sub ${diff > 0 ? 'neg' : 'pos'}">${avgSpend ? `평균 대비 ${diff > 0 ? '+' : ''}${M.manwon(diff)}원` : '비교할 평균 없음'}</div></div>
-    <div class="tile"><div class="label">고정비</div><div class="value">${M.won(row.고정비)}</div>
+    <div class="tile tap" data-drill-tile="고정비" role="button" tabindex="0"><div class="label">고정비</div><div class="value">${M.won(row.고정비)}</div>
       <div class="sub">대출이자·보험·구독 등</div></div>
-    <div class="tile"><div class="label">변동비</div><div class="value">${M.won(row.변동비)}</div>
+    <div class="tile tap" data-drill-tile="변동비" role="button" tabindex="0"><div class="label">변동비</div><div class="value">${M.won(row.변동비)}</div>
       <div class="sub">생활 소비</div></div>
-    <div class="tile"><div class="label">정기 수입</div><div class="value">${M.won(row.incomeMain)}</div>
+    <div class="tile tap" data-drill-tile="income" role="button" tabindex="0"><div class="label">정기 수입</div><div class="value">${M.won(row.incomeMain)}</div>
       <div class="sub ${row.incomeMain - spend >= 0 ? 'pos' : 'neg'}">남는 돈 ${M.won(row.incomeMain - spend, { sign: true })}</div>
       ${row.income - row.incomeMain ? `<div class="sub">일회성 유입 ${M.manwon(row.income - row.incomeMain)}원 별도</div>` : ''}
       ${row.incomeMain === 0 ? '<div class="sub">아직 이 달 급여가 들어오기 전입니다</div>' : ''}</div>
@@ -225,6 +227,12 @@ function mountDashboard() {
   document.querySelectorAll('[data-drill-once]').forEach((tr) => {
     tr.onclick = () => drill({ month: cur, cat: tr.dataset.drillOnce });
   });
+  // 위쪽 칸을 누르면 그달 내역 (수입은 들어온 돈 전부)
+  document.querySelectorAll('[data-drill-tile]').forEach((el) => {
+    const k = el.dataset.drillTile;
+    el.onclick = () => drill(k === 'income' ? { month: cur, type: 'income' } : { month: cur, major: k });
+    el.onkeydown = (e) => { if (e.key === 'Enter') el.onclick(); };
+  });
   document.getElementById('monthPick').onchange = (e) => {
     state.ui.month = e.target.value;
     render();
@@ -235,7 +243,8 @@ function mountDashboard() {
 export function transactions() {
   const f = (state.ui.filter ||= { month: '', type: 'expense', q: '', cat: '' });
   const mos = M.months();
-  const chips = [f.month && `${Number(f.month.slice(5))}월`, f.major, f.cat && M.categoryName(f.cat)].filter(Boolean);
+  const chips = [f.month && `${Number(f.month.slice(5))}월`, f.type && f.type !== 'expense' && TYPES[f.type],
+    f.major, f.cat && M.categoryName(f.cat)].filter(Boolean);
   return `
   ${state.ui.fromDash ? `<div class="drill-bar">
     <button class="btn btn-quiet" id="backDash">‹ 대시보드</button>
@@ -269,7 +278,8 @@ function filteredTx() {
 
 function txTableHtml() {
   const list = filteredTx();
-  const sum = list.filter((t) => t.type === 'expense' && !t.excluded).reduce((s, t) => s + -t.amount, 0);
+  const inc = state.ui.filter.type === 'income';
+  const sum = list.filter((t) => t.type === (inc ? 'income' : 'expense') && !t.excluded).reduce((s, t) => s + Math.abs(t.amount), 0);
   const ed = editable();
   const rows = list.slice(0, 400).map((t) => `
     <tr data-id="${t.id}" class="${t.excluded ? 'is-excluded' : ''}">
@@ -277,7 +287,7 @@ function txTableHtml() {
       <td>${esc(M.userName(t.owner))}</td>
       <td title="${esc(M.accountName(t.accountId))}">${esc((M.accountName(t.accountId) || '').replace(/\(.*\)/, ''))}</td>
       <td style="white-space:normal;min-width:160px">${esc(t.merchant)}${t.memo ? ` <span class="chip">${esc(t.memo)}</span>` : ''}</td>
-      <td class="num ${t.amount > 0 ? 'pos' : ''}">${M.won(-t.amount)}</td>
+      <td class="num ${t.amount > 0 ? 'pos' : ''}">${txAmt(t)}</td>
       <td>${ed ? `<select data-act="type">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === t.type ? 'selected' : ''}>${v}</option>`).join('')}</select>`
     : esc(TYPES[t.type] || t.type)}</td>
       <td>${ed ? `<select data-act="cat" ${t.type !== 'expense' ? 'disabled' : ''}>${catOptions(t.categoryId)}</select>`
@@ -285,7 +295,7 @@ function txTableHtml() {
       ${ed ? `<td><input type="checkbox" data-act="excl" ${t.excluded ? 'checked' : ''} title="집계에서 제외"></td>
       <td><button class="btn btn-quiet" data-act="del" title="삭제">✕</button></td>` : `<td>${t.excluded ? '<span class="chip">제외</span>' : ''}</td>`}
     </tr>`).join('');
-  return `<div class="card-head"><h2>${list.length}건</h2><span class="muted">소비 합계 ${M.won(sum)}${list.length > 400 ? ' · 최근 400건만 표시' : ''}</span></div>
+  return `<div class="card-head"><h2>${list.length}건</h2><span class="muted">${inc ? '수입' : '소비'} 합계 ${M.won(sum)}${list.length > 400 ? ' · 최근 400건만 표시' : ''}</span></div>
     ${ed ? '' : lockNote('카테고리·종류')}
     <div class="table-wrap"><table>
       <thead><tr><th>날짜</th><th>사용자</th><th>수단</th><th>내용</th><th class="num">금액</th><th>종류</th><th>카테고리</th>${ed ? '<th>제외</th><th></th>' : '<th></th>'}</tr></thead>
@@ -376,8 +386,10 @@ function entryCalendar() {
   </div>`;
 }
 
+// 결제수단 이름에서 괄호(주인 이름)를 뺀 짧은 이름
+const acctShort = (id) => (id ? M.accountName(id).replace(/\s*\(.*\)/, '') : '');
+
 function entryForm(date) {
-  const accounts = state.data.accounts;
   const list = M.visibleTx().filter((t) => t.date === date).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   const spend = list.filter((t) => t.type === 'expense' && !t.excluded).reduce((a, t) => a + -t.amount, 0);
   const d = new Date(date);
@@ -394,18 +406,19 @@ function entryForm(date) {
       <label class="field">금액<input id="eAmt" type="number" inputmode="numeric" placeholder="예: 34500"></label>
       <label class="field">카테고리<select id="eCat">${catOptions('food_grocery')}</select></label>
     </div>
+    <div class="field-label">결제수단</div>
+    <div class="pick" id="eAcctPick"></div>
+    <input type="hidden" id="eAcct" value="">
     <details class="more">
-      <summary class="muted">더 적기 (종류·사용자·결제수단·시간·메모)</summary>
+      <summary class="muted">더 적기 (종류·사용자·시간·메모)</summary>
       <div class="row-2" style="margin-top:10px">
         <label class="field">종류<select id="eType">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
         <label class="field">사용자<select id="eOwner">${state.data.users.map((u) => `<option value="${u.id}" ${u.id === defaultOwner ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
       </div>
       <div class="row-2">
-        <label class="field">결제수단<select id="eAcct"><option value="">(없음/현금)</option>
-          ${accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
         <label class="field">시간<input type="time" id="eTime"></label>
+        <label class="field">날짜<input type="date" id="eDate" value="${date}"></label>
       </div>
-      <label class="field">날짜<input type="date" id="eDate" value="${date}"></label>
       <label class="field">메모<input id="eMemo" placeholder="선택"></label>
     </details>
     <div class="btn-row" style="margin-top:12px">
@@ -416,10 +429,13 @@ function entryForm(date) {
 
   <div class="card">
     <div class="card-head"><h2>이날 기록</h2><span class="muted">${list.length}건</span></div>
-    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr>
-        <td style="white-space:normal">${esc(t.merchant)}${t.memo ? ` <span class="chip">${esc(t.memo)}</span>` : ''}</td>
+    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr class="${t.excluded ? 'is-excluded' : ''}">
+        <td style="white-space:normal">${esc(t.merchant)}${t.memo ? ` <span class="chip">${esc(t.memo)}</span>` : ''}
+          <div class="muted">${esc(acctShort(t.accountId) || '현금·기타')}</div></td>
         <td>${t.type === 'expense' ? esc(M.categoryName(t.categoryId)) : esc(TYPES[t.type] || '')}</td>
-        <td class="num ${t.amount > 0 ? 'pos' : ''}">${M.won(-t.amount)}</td></tr>`).join('')}</tbody></table></div>`
+        <td class="num ${t.amount > 0 ? 'pos' : ''}">${txAmt(t)}</td>
+        <td><button class="btn btn-quiet" data-del="${t.id}" aria-label="삭제">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <p class="muted" style="margin:8px 0 0">잘못 넣었으면 ✕로 지웁니다. 금액·내용을 고치려면 지우고 다시 넣어주세요.</p>`
     : '<p class="muted">아직 기록이 없습니다.</p>'}
   </div>`;
 }
@@ -449,7 +465,7 @@ function mountEntry() {
   if (draft && draft.forDate === state.ui.entryDate) {
     FIELDS.forEach((id) => { if (draft[id] != null && g(id)) g(id).value = draft[id]; });
     g('eCat').disabled = g('eType').value !== 'expense';
-    if (draft.eType !== 'expense' || draft.eAcct || draft.eTime || draft.eMemo) document.querySelector('details.more')?.setAttribute('open', '');
+    if (draft.eType !== 'expense' || draft.eTime || draft.eMemo) document.querySelector('details.more')?.setAttribute('open', '');
   }
   const keep = () => {
     state.ui.entryDraft = { forDate: state.ui.entryDate, ...Object.fromEntries(FIELDS.map((id) => [id, g(id).value])) };
@@ -457,6 +473,29 @@ function mountEntry() {
   };
   const clearDraft = () => { state.ui.entryDraft = null; saveUIState(); };
   FIELDS.forEach((id) => { g(id).addEventListener('input', keep); g(id).addEventListener('change', keep); });
+
+  // 결제수단: 고른 사용자의 카드·통장만 버튼으로 보여준다 (카드 먼저)
+  const drawAcct = () => {
+    const mine = state.data.accounts.filter((a) => !a.owner || a.owner === g('eOwner').value)
+      .sort((a, b) => (a.type === 'card' ? 0 : 1) - (b.type === 'card' ? 0 : 1));
+    if (g('eAcct').value && !mine.some((a) => a.id === g('eAcct').value)) g('eAcct').value = '';
+    g('eAcctPick').innerHTML = [{ id: '', name: '현금·기타' }, ...mine].map((a) =>
+      `<button type="button" data-acct="${a.id}" class="${a.id === g('eAcct').value ? 'is-active' : ''}">${esc(a.id ? acctShort(a.id) : a.name)}</button>`).join('');
+    g('eAcctPick').querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { g('eAcct').value = b.dataset.acct; drawAcct(); keep(); };
+    });
+  };
+  drawAcct();
+  g('eOwner').addEventListener('change', () => { drawAcct(); keep(); });
+  document.querySelectorAll('[data-del]').forEach((b) => {
+    const t = state.data.transactions.find((x) => x.id === b.dataset.del);
+    b.onclick = () => {
+      if (!t || !confirm(`${t.merchant} ${M.won(-t.amount)} 지울까요?`)) return;
+      removeTransaction(t.id);
+      toast('지웠습니다.');
+      render();
+    };
+  });
 
   g('backCal').onclick = () => { state.ui.entryDate = null; clearDraft(); render(); };
   g('eName').addEventListener('blur', () => {

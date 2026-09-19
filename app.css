@@ -196,6 +196,18 @@ ul.tight li { margin-bottom: 4px; font-size: 13px; color: var(--text-secondary);
 .is-sun .cal-day, .cal-week.is-sun { color: var(--bad); }
 .is-sat .cal-day, .cal-week.is-sat { color: var(--series-1); }
 details.more summary { cursor: pointer; padding: 4px 0; }
+/* 입력 창: 결제수단을 눌러서 고른다 */
+.field-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.pick button {
+  border: 1px solid var(--line); background: var(--surface-1); color: var(--text-primary); font-family: inherit;
+  font-size: 14px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+}
+.pick button.is-active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+/* 대시보드: 누르면 내역이 나오는 칸 */
+.tile.tap { cursor: pointer; }
+.tile.tap:hover { background: var(--surface-2); }
+.tile.tap .label::after { content: ' ›'; }
 
 /* ---------- 월말 정리 ---------- */
 .progress { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
