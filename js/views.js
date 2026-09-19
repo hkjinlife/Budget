@@ -442,9 +442,26 @@ function mountEntry() {
     return;
   }
 
-  g('backCal').onclick = () => { state.ui.entryDate = null; render(); };
+  // 적는 중인 내용을 임시 저장한다. 다른 앱에 다녀오는 사이 화면이 다시 그려지거나
+  // (아이폰이 메모리를 아끼려고) 앱이 새로 열려도 입력칸을 그대로 채운다. 저장하거나 달력으로 나가면 지운다
+  const FIELDS = ['eName', 'eAmt', 'eCat', 'eType', 'eOwner', 'eAcct', 'eTime', 'eDate', 'eMemo'];
+  const draft = state.ui.entryDraft;
+  if (draft && draft.forDate === state.ui.entryDate) {
+    FIELDS.forEach((id) => { if (draft[id] != null && g(id)) g(id).value = draft[id]; });
+    g('eCat').disabled = g('eType').value !== 'expense';
+    if (draft.eType !== 'expense' || draft.eAcct || draft.eTime || draft.eMemo) document.querySelector('details.more')?.setAttribute('open', '');
+  }
+  const keep = () => {
+    state.ui.entryDraft = { forDate: state.ui.entryDate, ...Object.fromEntries(FIELDS.map((id) => [id, g(id).value])) };
+    saveUIState();
+  };
+  const clearDraft = () => { state.ui.entryDraft = null; saveUIState(); };
+  FIELDS.forEach((id) => { g(id).addEventListener('input', keep); g(id).addEventListener('change', keep); });
+
+  g('backCal').onclick = () => { state.ui.entryDate = null; clearDraft(); render(); };
   g('eName').addEventListener('blur', () => {
     if (g('eType').value === 'expense' && g('eName').value) g('eCat').value = M.guessCategory(g('eName').value);
+    keep();
   });
   g('eType').addEventListener('change', () => { g('eCat').disabled = g('eType').value !== 'expense'; });
   const saveOne = () => {
@@ -467,12 +484,14 @@ function mountEntry() {
   };
   g('eSave').onclick = () => {
     if (!saveOne()) return;
+    clearDraft();
     state.ui.calMonth = g('eDate').value.slice(0, 7);
     state.ui.entryDate = null;            // 저장하면 달력으로 돌아간다
     render();
   };
   g('eSaveMore').onclick = () => {
     if (!saveOne()) return;
+    clearDraft();
     state.ui.entryDate = g('eDate').value;
     render();                              // 같은 날 입력 창을 비워서 다시 연다
     document.getElementById('eName')?.focus();

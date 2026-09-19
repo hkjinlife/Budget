@@ -89,6 +89,14 @@ export function monthlyChart(canvas, { labels, fixed, variable, income, onPick }
 }
 
 /** 카테고리별 가로 막대 — 값은 막대 끝에 직접 표시 */
+/** 가로 막대 그래프에서 누른 위치(y)가 몇 번째 줄인지. 그래프 영역 밖이면 null */
+function rowAt(chart, evt) {
+  const y = chart.scales.y;
+  if (evt.y < y.top || evt.y > y.bottom) return null;
+  const i = Math.round(y.getValueForPixel(evt.y));
+  return i >= 0 && i < chart.data.labels.length ? i : null;
+}
+
 export function categoryChart(canvas, rows, { compare = null, onPick } = {}) {
   const t = theme();
   destroy(canvas.id);
@@ -126,12 +134,16 @@ export function categoryChart(canvas, rows, { compare = null, onPick } = {}) {
     },
     options: {
       ...base(t),
-      onClick: (evt, els) => {
-        if (!onPick || !els.length) return;
-        onPick(rows[els[0].index]);
+      // 가장 가까운 막대 끝이 아니라 누른 높이의 줄을 고른다 (긴 막대 가운데를 누르면 옆 줄이 잡히던 문제)
+      onClick: (evt, els, chart) => {
+        const i = rowAt(chart, evt);
+        if (onPick && i != null) onPick(rows[i]);
       },
-      onHover: (evt, els) => { evt.native.target.style.cursor = onPick && els.length ? 'pointer' : 'default'; },
+      onHover: (evt, els, chart) => {
+        evt.native.target.style.cursor = onPick && rowAt(chart, evt) != null ? 'pointer' : 'default';
+      },
       indexAxis: 'y',
+      interaction: { mode: 'index', axis: 'y', intersect: false },   // 가로 막대라 줄(y) 기준으로 찾는다
       layout: { padding: { right: 96 } },
       plugins: {
         ...base(t).plugins,
