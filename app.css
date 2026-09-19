@@ -203,6 +203,8 @@ details.more summary { cursor: pointer; padding: 4px 0; }
   border: 1px solid var(--line); background: var(--surface-1); color: var(--text-primary); font-family: inherit;
   font-size: 14px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
 }
+tr.tap-row { cursor: pointer; }
+tr.is-editing td { background: var(--surface-2); font-weight: 600; }
 .pick button.is-active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 /* 대시보드: 누르면 내역이 나오는 칸 */
 .tile.tap { cursor: pointer; }

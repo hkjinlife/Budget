@@ -1,5 +1,5 @@
 // 화면 렌더링. 각 함수는 HTML 문자열을 만들고, mount()에서 이벤트를 붙인다.
-import { state, touch, markEdited, mergeGifts, removeTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
+import { state, touch, markEdited, mergeGifts, removeTransaction, editTransaction, addTransactions, today, canUseFileSystem, connectFile, exportFile, importFile, save, resetData, forgetDevice, addFeedback, updateFeedback, removeFeedback, saveUI as saveUIState, applyIncoming } from './store.js';
 import * as M from './model.js';
 import { monthlyChart, categoryChart, investChart, loanChart } from './charts.js';
 import { parseFile, parseGiftReturn, reconcile, applyInvestFlows, suggestLinks, commitLinks, autoLinks, DEFAULT_AUTOLINKS } from './importers.js';
@@ -389,7 +389,12 @@ function entryCalendar() {
 // 결제수단 이름에서 괄호(주인 이름)를 뺀 짧은 이름
 const acctShort = (id) => (id ? M.accountName(id).replace(/\s*\(.*\)/, '') : '');
 
+// 입력 창에서 고치는 중인 거래 (다른 기기에서 지워졌으면 없음)
+const editingTx = () => (state.ui.entryEdit
+  ? state.data.transactions.find((t) => t.id === state.ui.entryEdit && !t.deleted) : null);
+
 function entryForm(date) {
+  const editing = editingTx();
   const list = M.visibleTx().filter((t) => t.date === date).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   const spend = list.filter((t) => t.type === 'expense' && !t.excluded).reduce((a, t) => a + -t.amount, 0);
   const d = new Date(date);
@@ -401,6 +406,7 @@ function entryForm(date) {
       <h2 style="margin:0">${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})</h2>
       <span class="muted">${M.won(spend)}</span>
     </div>
+    ${editing ? `<div class="notice" style="margin-bottom:10px">✎ <b>${esc(editing.merchant)}</b> ${txAmt(editing)} 기록을 고치는 중입니다.</div>` : ''}
     <label class="field">내용 (가맹점·적요)<input id="eName" placeholder="예: 동네마트" autocomplete="off"></label>
     <div class="row-2">
       <label class="field">금액<input id="eAmt" type="number" inputmode="numeric" placeholder="예: 34500"></label>
@@ -422,20 +428,23 @@ function entryForm(date) {
       <label class="field">메모<input id="eMemo" placeholder="선택"></label>
     </details>
     <div class="btn-row" style="margin-top:12px">
-      <button class="btn btn-primary" id="eSave">저장</button>
-      <button class="btn" id="eSaveMore">저장하고 하나 더</button>
+      ${editing ? `<button class="btn btn-primary" id="eSave">고친 내용 저장</button>
+      ${editing.type === 'expense' && editing.amount < 0 ? '<button class="btn" id="eRefund">환불 넣기</button>' : ''}
+      <button class="btn btn-quiet" id="eCancel">취소</button>`
+    : `<button class="btn btn-primary" id="eSave">저장</button>
+      <button class="btn" id="eSaveMore">저장하고 하나 더</button>`}
     </div>
   </div>
 
   <div class="card">
     <div class="card-head"><h2>이날 기록</h2><span class="muted">${list.length}건</span></div>
-    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr class="${t.excluded ? 'is-excluded' : ''}">
+    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((t) => `<tr data-edit="${t.id}" class="tap-row ${t.excluded ? 'is-excluded' : ''} ${t.id === editing?.id ? 'is-editing' : ''}">
         <td style="white-space:normal">${esc(t.merchant)}${t.memo ? ` <span class="chip">${esc(t.memo)}</span>` : ''}
           <div class="muted">${esc(acctShort(t.accountId) || '현금·기타')}</div></td>
         <td>${t.type === 'expense' ? esc(M.categoryName(t.categoryId)) : esc(TYPES[t.type] || '')}</td>
         <td class="num ${t.amount > 0 ? 'pos' : ''}">${txAmt(t)}</td>
         <td><button class="btn btn-quiet" data-del="${t.id}" aria-label="삭제">✕</button></td></tr>`).join('')}</tbody></table></div>
-      <p class="muted" style="margin:8px 0 0">잘못 넣었으면 ✕로 지웁니다. 금액·내용을 고치려면 지우고 다시 넣어주세요.</p>`
+      <p class="muted" style="margin:8px 0 0">기록을 누르면 고칠 수 있고, ✕를 누르면 지웁니다. 환불은 기록을 누른 뒤 '환불 넣기'로 넣습니다.</p>`
     : '<p class="muted">아직 기록이 없습니다.</p>'}
   </div>`;
 }
@@ -461,6 +470,8 @@ function mountEntry() {
   // 적는 중인 내용을 임시 저장한다. 다른 앱에 다녀오는 사이 화면이 다시 그려지거나
   // (아이폰이 메모리를 아끼려고) 앱이 새로 열려도 입력칸을 그대로 채운다. 저장하거나 달력으로 나가면 지운다
   const FIELDS = ['eName', 'eAmt', 'eCat', 'eType', 'eOwner', 'eAcct', 'eTime', 'eDate', 'eMemo'];
+  const editing = editingTx();
+  if (!editing) state.ui.entryEdit = null;
   const draft = state.ui.entryDraft;
   if (draft && draft.forDate === state.ui.entryDate) {
     FIELDS.forEach((id) => { if (draft[id] != null && g(id)) g(id).value = draft[id]; });
@@ -474,11 +485,12 @@ function mountEntry() {
   const clearDraft = () => { state.ui.entryDraft = null; saveUIState(); };
   FIELDS.forEach((id) => { g(id).addEventListener('input', keep); g(id).addEventListener('change', keep); });
 
-  // 결제수단: 고른 사용자의 카드·통장만 버튼으로 보여준다 (카드 먼저)
-  const drawAcct = () => {
-    const mine = state.data.accounts.filter((a) => !a.owner || a.owner === g('eOwner').value)
+  // 결제수단: 고른 사용자의 카드·통장만 버튼으로 보여준다 (카드 먼저). 사용자를 바꾸면 그 사람 것이 아닌 선택은 푼다
+  const drawAcct = (reset = false) => {
+    const own = (a) => !a.owner || a.owner === g('eOwner').value;
+    if (reset && g('eAcct').value && !state.data.accounts.some((a) => a.id === g('eAcct').value && own(a))) g('eAcct').value = '';
+    const mine = state.data.accounts.filter((a) => own(a) || a.id === g('eAcct').value)
       .sort((a, b) => (a.type === 'card' ? 0 : 1) - (b.type === 'card' ? 0 : 1));
-    if (g('eAcct').value && !mine.some((a) => a.id === g('eAcct').value)) g('eAcct').value = '';
     g('eAcctPick').innerHTML = [{ id: '', name: '현금·기타' }, ...mine].map((a) =>
       `<button type="button" data-acct="${a.id}" class="${a.id === g('eAcct').value ? 'is-active' : ''}">${esc(a.id ? acctShort(a.id) : a.name)}</button>`).join('');
     g('eAcctPick').querySelectorAll('button').forEach((b) => {
@@ -486,56 +498,111 @@ function mountEntry() {
     });
   };
   drawAcct();
-  g('eOwner').addEventListener('change', () => { drawAcct(); keep(); });
+  g('eOwner').addEventListener('change', () => { drawAcct(true); keep(); });
+  const stopEdit = () => { state.ui.entryEdit = null; clearDraft(); };
   document.querySelectorAll('[data-del]').forEach((b) => {
     const t = state.data.transactions.find((x) => x.id === b.dataset.del);
-    b.onclick = () => {
-      if (!t || !confirm(`${t.merchant} ${M.won(-t.amount)} 지울까요?`)) return;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (!t || !confirm(`${t.merchant} ${txAmt(t)} 지울까요?`)) return;
       removeTransaction(t.id);
+      if (t.id === state.ui.entryEdit) stopEdit();
       toast('지웠습니다.');
       render();
     };
   });
+  // 기록을 누르면 위 입력칸에 채워서 고친다
+  document.querySelectorAll('tr[data-edit]').forEach((tr) => {
+    tr.onclick = () => {
+      const t = state.data.transactions.find((x) => x.id === tr.dataset.edit);
+      if (!t) return;
+      state.ui.entryEdit = t.id;
+      state.ui.entryDraft = {
+        forDate: state.ui.entryDate, eName: t.merchant || '', eAmt: String(Math.abs(t.amount)),
+        eCat: t.categoryId || 'etc', eType: t.type, eOwner: t.owner, eAcct: t.accountId || '',
+        eTime: t.time || '', eDate: t.date, eMemo: t.memo || '',
+      };
+      saveUIState();
+      render();
+      window.scrollTo(0, 0);
+    };
+  });
 
-  g('backCal').onclick = () => { state.ui.entryDate = null; clearDraft(); render(); };
+  g('backCal').onclick = () => { state.ui.entryDate = null; stopEdit(); render(); };
+  if (g('eCancel')) g('eCancel').onclick = () => { stopEdit(); render(); };
+  // 내용을 바꿨을 때만 카테고리를 다시 짐작한다 (고른 카테고리를 덮어쓰지 않게)
+  let lastName = g('eName').value;
   g('eName').addEventListener('blur', () => {
-    if (g('eType').value === 'expense' && g('eName').value) g('eCat').value = M.guessCategory(g('eName').value);
+    const name = g('eName').value;
+    if (name !== lastName && g('eType').value === 'expense' && name) g('eCat').value = M.guessCategory(name);
+    lastName = name;
     keep();
   });
   g('eType').addEventListener('change', () => { g('eCat').disabled = g('eType').value !== 'expense'; });
   const saveOne = () => {
-    const amtRaw = Number(g('eAmt').value);
+    const amtRaw = Math.abs(Number(g('eAmt').value));
     if (!g('eName').value.trim() || !amtRaw) { toast('내용과 금액을 넣어주세요.'); return false; }
     const type = g('eType').value;
-    const amount = type === 'income' ? Math.abs(amtRaw) : -Math.abs(amtRaw);
+    // 수입은 +, 나머지는 −. 고칠 때 종류가 그대로면 원래 부호를 따른다 (환불은 +로 남게)
+    const sign = editing && editing.type === type ? Math.sign(editing.amount) || -1 : type === 'income' ? 1 : -1;
+    const amount = sign * amtRaw;
     let categoryId = type === 'expense' ? g('eCat').value : null;
-    if (type === 'expense' && Math.abs(amtRaw) >= BIG_SPEND && M.majorOf(categoryId) === '변동비'
+    const changed = !editing || editing.amount !== amount || editing.categoryId !== categoryId;
+    if (changed && type === 'expense' && -amount >= BIG_SPEND && M.majorOf(categoryId) === '변동비'
       && confirm(ONCE_QUESTION)) categoryId = 'once_big';
-    const { added, dup } = addTransactions([{
+    const row = {
       date: g('eDate').value, time: g('eTime').value, merchant: g('eName').value.trim(),
       amount, type, owner: g('eOwner').value, accountId: g('eAcct').value,
-      categoryId,
-      memo: g('eMemo').value.trim(), source: 'manual',
-    }]);
+      categoryId, memo: g('eMemo').value.trim(),
+    };
+    if (editing) {
+      editTransaction(editing.id, row);
+      toast('고쳤습니다.');
+      return true;
+    }
+    const { added, dup } = addTransactions([{ ...row, source: 'manual' }]);
     if (!added.length && dup.length) { toast('같은 거래가 이미 있습니다.'); return false; }
     toast('저장했습니다.');
     return true;
   };
   g('eSave').onclick = () => {
+    const date = g('eDate').value;
     if (!saveOne()) return;
-    clearDraft();
-    state.ui.calMonth = g('eDate').value.slice(0, 7);
-    state.ui.entryDate = null;            // 저장하면 달력으로 돌아간다
+    if (editing) {
+      stopEdit();
+      state.ui.entryDate = date;          // 고친 뒤에는 그날 기록을 다시 보여준다
+    } else {
+      clearDraft();
+      state.ui.calMonth = date.slice(0, 7);
+      state.ui.entryDate = null;          // 저장하면 달력으로 돌아간다
+    }
     render();
   };
-  g('eSaveMore').onclick = () => {
+  // 환불: 원래 결제는 두고, 오늘 날짜로 + 금액 줄을 넣는다 (카드 명세서와 같은 방식)
+  if (g('eRefund')) g('eRefund').onclick = () => {
+    const v = prompt('환불받은 금액 (원)\n전액이면 그대로 확인을 누르세요.', String(-editing.amount));
+    if (v == null) return;
+    const amt = Math.abs(Number(String(v).replace(/[^\d.]/g, '')));
+    if (!amt) { toast('금액을 넣어주세요.'); return; }
+    const day = today();
+    const { added } = addTransactions([{
+      date: day, time: '', merchant: `${editing.merchant} 환불`, amount: amt, type: 'expense',
+      owner: editing.owner, accountId: editing.accountId || '', categoryId: editing.categoryId,
+      memo: `${Number(editing.date.slice(5, 7))}/${Number(editing.date.slice(8))} 결제 환불`, source: 'manual',
+    }]);
+    if (!added.length) { toast('같은 환불이 이미 있습니다.'); return; }
+    stopEdit();
+    toast(`${Number(day.slice(5, 7))}월 ${Number(day.slice(8))}일에 환불 ${M.won(amt)}을 넣었습니다.`);
+    render();
+  };
+  if (g('eSaveMore')) g('eSaveMore').onclick = () => {
     if (!saveOne()) return;
     clearDraft();
     state.ui.entryDate = g('eDate').value;
     render();                              // 같은 날 입력 창을 비워서 다시 연다
     document.getElementById('eName')?.focus();
   };
-  setTimeout(() => g('eName')?.focus(), 50);
+  if (!editing) setTimeout(() => g('eName')?.focus(), 50);
 }
 
 /* ================= 파일 올리기 (월말 정리에서 사용) ================= */

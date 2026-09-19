@@ -271,7 +271,11 @@ function normalize(d) {
   });
 }
 
-export function today() { return new Date().toISOString().slice(0, 10); }
+/** 이 기기 시간대의 오늘 (UTC로 하면 한국 아침 9시 전에는 어제가 된다) */
+export function today() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
 
 export function latestMonth() {
   const ms = state.data.transactions.filter((t) => !t.deleted).map((t) => t.date.slice(0, 7)).sort();
@@ -440,9 +444,11 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
     const ours = same.mt || '';
     const useTheirs = (theirs || ours) ? theirs > ours : newer;
     if (!useTheirs) return;
-    if (same.categoryId !== t.categoryId || same.type !== t.type || !!same.deleted !== !!t.deleted
-      || !!same.excluded !== !!t.excluded || (same.memo || '') !== (t.memo || '')) {
-      Object.assign(same, { categoryId: t.categoryId, type: t.type, excluded: t.excluded, memo: t.memo, deleted: t.deleted });
+    // 사용자·시간은 직접 고친 거래(mt 있음)일 때만 따른다
+    const keys = ['categoryId', 'type', 'excluded', 'memo', 'deleted', ...(t.mt ? ['owner', 'time'] : [])];
+    const norm = (k, v) => (k === 'excluded' || k === 'deleted' ? !!v : k === 'memo' || k === 'time' ? v || '' : v);
+    if (keys.some((k) => norm(k, same[k]) !== norm(k, t[k]))) {
+      keys.forEach((k) => { same[k] = t[k]; });
       if (t.mt) same.mt = t.mt;
       updated += 1;
     }
@@ -598,6 +604,29 @@ export async function forgetDevice() {
   try { localStorage.removeItem(LS_KEY); } catch { /* 무시 */ }
   try { await idbSet('dataFile', null); } catch { /* 무시 */ }
   state.fileHandle = null;
+}
+
+/** 거래를 고친다. 날짜·결제수단·내용·금액이 바뀌면 다른 기기의 같은 줄과 짝이 안 맞으므로
+ *  옛 줄은 지운 표시를 하고 새 줄로 넣는다 (다른 기기에서도 옛 줄은 지워지고 새 줄이 들어온다) */
+export function editTransaction(id, patch) {
+  const t = state.data.transactions.find((x) => x.id === id);
+  if (!t) return null;
+  const next = { ...t, ...patch };
+  if (dedupKey(next) === dedupKey(t)) {
+    Object.assign(t, patch);
+    markEdited(t);
+    touch();
+    return t;
+  }
+  t.deleted = true;
+  markEdited(t);
+  const fresh = { ...next };
+  delete fresh.id; delete fresh.deleted; delete fresh.mt;
+  let { added } = addTransactions([fresh]);
+  // 같은 날 같은 값의 거래가 이미 있어도 (커피 두 잔 등) 고친 것은 넣는다
+  if (!added.length) ({ added } = addTransactions([fresh], { checked: true }));
+  touch();
+  return added[0];
 }
 
 /** 지운 거래는 줄을 없애지 않고 deleted 표시만 한다. 줄을 없애면 다른 기기와 합칠 때 되살아나기 때문 */
