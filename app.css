@@ -277,7 +277,7 @@ details.fold[open] > summary { margin-bottom: 10px; }
 .grid.assets { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .grid.assets .value { font-size: 19px; white-space: nowrap; }
 @media (max-width: 560px) {
-  .grid.assets .tile:first-child { grid-column: 1 / -1; }   /* 폰에서는 '전체 자산'을 한 줄 전체로 */
+  .grid.assets .tile.wide { grid-column: 1 / -1; }   /* 폰에서는 '전체 자산'·'투자 자산'을 한 줄 전체로 */
 }
 
 /* '예상' 같은 작은 표시 */

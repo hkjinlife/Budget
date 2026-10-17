@@ -1304,7 +1304,13 @@ function assetSummary() {
     principal: s.total.principal + (state.data.otherAssets || [])
       .reduce((t, a) => t + (Number(a.principal) || Number(a.value) || 0), 0),
   });
-  return { s, items, total };
+  // 부동산(아파트 등)을 뺀 투자만의 손익 — 집값과 섞이지 않게 따로 본다
+  const homes = (state.data.otherAssets || []).filter((a) => otherKind(a.name) === '부동산');
+  const invested = homes.length ? withRate({
+    value: total.value - homes.reduce((t, a) => t + (Number(a.value) || 0), 0),
+    principal: total.principal - homes.reduce((t, a) => t + (Number(a.principal) || Number(a.value) || 0), 0),
+  }) : null;
+  return { s, items, total, invested };
 }
 
 /** 기타 자산의 구분 (이름으로 짐작) */
@@ -1312,12 +1318,12 @@ const otherKind = (name) => (/청약/.test(name) ? '청약' : /연금/.test(name
   : /보험|변액/.test(name) ? '보험' : /아파트|부동산|주택|오피스텔|토지/.test(name) ? '부동산' : '기타');
 
 export function invest() {
-  const { items, total } = assetSummary();
+  const { items, total, invested } = assetSummary();
   const inv = state.data.investment;
   // 한눈에 '원금 대비 얼마 벌었나(잃었나)'가 보이게: 번 돈을 굵게, 원금은 그 아래
   const gain = (o) => `<div class="sub gain ${o.profit >= 0 ? 'pos' : 'neg'}"><span>${o.profit >= 0 ? '번 돈' : '잃은 돈'} ${M.won(o.profit, { sign: true })}</span>${
     o.rate && o.profit ? ` <span>(${o.rate > 0 ? '+' : ''}${M.pct(o.rate)})</span>` : ''}</div>`;
-  const tile = (label, o) => `<div class="tile"><div class="label">${esc(label)}</div>
+  const tile = (label, o, cls = '') => `<div class="tile ${cls}"><div class="label">${esc(label)}</div>
     <div class="value">${M.won(o.value)}</div>
     ${o.noPrincipal ? '<div class="sub muted">원금 기록 없음</div>'
     : o.principal > 0 ? `${gain(o)}<div class="sub">원금 ${M.manwon(o.principal)}원</div>`
@@ -1326,7 +1332,8 @@ export function invest() {
     : `<div class="sub gain ${o.profit >= 0 ? 'pos' : 'neg'}">팔고 남긴 돈 ${M.won(o.profit, { sign: true })}</div>`}</div>`;
   return `
   <div class="grid assets" style="margin-bottom:14px">
-    ${tile('전체 자산', total)}
+    ${tile('전체 자산', total, 'wide')}
+    ${invested ? tile('투자 자산 (부동산 제외)', invested, 'wide') : ''}
     ${items.map((o) => tile(o.label, o)).join('')}
   </div>
 
