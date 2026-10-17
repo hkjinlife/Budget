@@ -1007,18 +1007,22 @@ export function monthlyView() {
   state.ui.chkMonth = month;
   const items = M.checklist();
   const st = M.monthStatus(month);
-  const done = items.filter((it) => st[it.id]?.done).length;
+  // '있을 때만' 항목은 한 경우에만 센다
+  const counted = items.filter((it) => !it.optional || st[it.id]?.done);
+  const done = counted.filter((it) => st[it.id]?.done).length;
   const [y, m] = month.split('-').map(Number);
+  const folder = `자료/${y}.${String(m).padStart(2, '0')}`;
   const ed = editable();
 
   const itemHtml = (it) => {
     const s2 = st[it.id] || {};
     const head = `<div class="chk-head">
         <label class="chk-box"><input type="checkbox" data-chk="${it.id}" ${s2.done ? 'checked' : ''}>
-          <b>${esc(it.name)}</b></label>
+          <b>${esc(it.name)}</b>${it.optional ? ' <span class="muted">(있을 때만)</span>' : ''}</label>
         <span class="muted">${s2.done ? `완료 ${esc((s2.at || '').slice(5, 10).replace('-', '/'))}${s2.note ? ` · ${esc(s2.note)}` : ''}` : esc(it.hint || '')}</span>
         ${ed ? `<button class="btn btn-quiet" data-delitem="${it.id}" title="항목 지우기">✕</button>` : ''}
-      </div>`;
+      </div>
+      ${it.get ? `<div class="chk-get">받아 둘 것: ${esc(it.get)}</div>` : ''}`;
     let body = '';
     if (it.kind === 'upload') {
       body = `<div class="btn-row"><label class="btn" style="display:inline-block">파일 올리기
@@ -1087,11 +1091,13 @@ export function monthlyView() {
   <div class="card">
     <div class="cal-head">
       <button class="btn btn-quiet" id="chkPrev" aria-label="이전 달">‹</button>
-      <div class="cal-title"><b>${y}년 ${m}월 정리</b><span class="muted">${items.length}개 중 ${done}개 완료</span></div>
+      <div class="cal-title"><b>${y}년 ${m}월 정리</b><span class="muted">${counted.length}개 중 ${done}개 완료</span></div>
       <button class="btn btn-quiet" id="chkNext" aria-label="다음 달">›</button>
     </div>
-    <div class="progress"><i style="width:${items.length ? (done / items.length) * 100 : 0}%"></i></div>
-    <p class="muted" style="margin-top:8px">카드·통장은 파일을 올리면, 자산은 금액을 저장하면 자동으로 체크됩니다. 이번 달은 건너뛸 거면 직접 체크하세요.</p>
+    <div class="progress"><i style="width:${counted.length ? (done / counted.length) * 100 : 0}%"></i></div>
+    <div class="notice" style="margin-top:10px">아래 '받아 둘 것'을 받아 구글 드라이브 앱 폴더의 <b>${esc(folder)}</b> 폴더에 넣고
+      Claude에게 "${m}월 자료 반영해줘"라고 하면 됩니다. 반영이 끝난 항목은 체크되고 옆에 '반영'이라고 적힙니다.</div>
+    <p class="muted" style="margin-top:8px">앱에서 바로 해도 됩니다: 카드·통장은 파일을 올리면, 자산은 금액을 저장하면 체크됩니다. 이번 달은 건너뛸 거면 직접 체크하세요.</p>
   </div>
   ${items.map(itemHtml).join('')}
   ${ed ? `<div class="card"><h2>항목 추가</h2>
@@ -1276,7 +1282,7 @@ function mountMonthly() {
  *  위 요약 칸·그래프·표가 모두 이 목록을 써서, 자산을 추가하면 세 곳에 함께 나타난다 */
 function assetSummary() {
   const s = M.investSummary();
-  const withRate = (o) => ({ ...o, profit: o.value - o.principal, rate: o.principal ? (o.value - o.principal) / o.principal : null });
+  const withRate = (o) => ({ ...o, profit: o.value - o.principal, rate: o.principal > 0 ? (o.value - o.principal) / o.principal : null });
   const short = (name) => String(name || '').replace(/\s*\(.*?\)\s*/g, ' ').trim();   // 그래프 이름은 괄호를 뺀다
   const items = [];     // { label, chart(그래프 이름, 없으면 요약 칸에만), value, principal, profit, rate, noPrincipal }
   if (s.groups.jeonbuk) items.push({ label: M.GROUP_NAMES.jeonbuk, ...s.groups.jeonbuk });
@@ -1311,7 +1317,9 @@ export function invest() {
   const tile = (label, o) => `<div class="tile"><div class="label">${esc(label)}</div>
     <div class="value">${M.won(o.value)}</div>
     ${o.noPrincipal ? '<div class="sub muted">원금 기록 없음</div>'
-    : `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원</div>`}</div>`;
+    : o.principal > 0 ? `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원</div>`
+    // 넣은 돈보다 더 빼 갔으면(다 팔고 수익을 뺀 경우) 수익률 대신 남긴 돈만 보여준다
+    : `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">팔고 남긴 돈 ${M.won(o.profit, { sign: true })}</div>`}</div>`;
   return `
   <div class="grid assets" style="margin-bottom:14px">
     ${tile('전체 자산', total)}
@@ -1357,7 +1365,7 @@ function mountInvest() {
   const groupOpts = (sel) => Object.entries(M.GROUP_NAMES)
     .map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(v)}</option>`).join('');
   const profitCell = (o) => (o && o.principal
-    ? `<td class="num ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)})</td>`
+    ? `<td class="num ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })}${o.rate != null ? ` (${M.pct(o.rate)})` : ''}</td>`
     : '<td class="num muted">-</td>');
   // 전북·비트코인 보유: 원금은 묶음(펀드 전체·외화·비트코인) 단위로만 안다
   const holdingResult = (h) => {
@@ -1385,7 +1393,7 @@ function mountInvest() {
     }).join('') + others.map((a, i) => {
       const o = { principal: Number(a.principal) || 0, value: Number(a.value) || 0 };
       o.profit = o.value - o.principal;
-      o.rate = o.principal ? o.profit / o.principal : null;
+      o.rate = o.principal > 0 ? o.profit / o.principal : null;
       return ed ? `<tr data-other-i="${i}">
         <td><input data-f="name" value="${esc(a.name)}" style="min-width:170px"></td>
         <td class="muted">${otherKind(a.name)}</td>

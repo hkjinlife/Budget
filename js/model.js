@@ -123,7 +123,7 @@ export function investSummary() {
   inv.holdings.forEach((h) => { add(h.group || 'jeonbuk').value += Number(h.value) || 0; });
   Object.values(groups).forEach((g) => {
     g.profit = g.value - g.principal;
-    g.rate = g.principal ? g.profit / g.principal : null;
+    g.rate = g.principal > 0 ? g.profit / g.principal : null;
   });
   // 전북 안에서 외화예금으로 옮긴 돈은 원금이 아니라 내부 이동 — 달러 성과만 따로 본다
   const fxValue = inv.holdings.filter((h) => h.kind === 'fx').reduce((s, h) => s + (Number(h.value) || 0), 0);
@@ -367,15 +367,21 @@ export function shortWon(n) {
 
 /* ---------- 월말 정리 ---------- */
 // kind: upload(파일 올리기) / holdings(투자 평가금액 여러 개) / asset(자산 하나의 금액)
+// get: 매달 받아 둘 자료 (드라이브 '자료/YYYY.MM' 폴더에 넣는다). optional: 있을 때만 — 완료 개수에 넣지 않는다
 export const DEFAULT_CHECKLIST = [
-  { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀이나 PDF를 받아 올리세요' },
-  { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용대금명세서 또는 실시간 이용내역(.xls)' },
-  { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역 엑셀이나 PDF' },
-  { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액을 고치세요', alsoUpload: true },
-  { id: 'kis', name: '한국투자증권', kind: 'asset', match: '연금저축|한국투자', hint: '연금저축 평가금액과 원금', alsoUpload: true, withPrincipal: true },
-  { id: 'apt', name: '아파트 시세', kind: 'asset', match: '아파트', hint: 'KB시세나 실거래가' },
-  { id: 'housing_sub', name: '주택청약', kind: 'asset', match: '청약', hint: '지금까지 넣은 총액' },
-  { id: 'metlife', name: '변액유니버셜', kind: 'asset', match: '변액', hint: '보험사 앱의 적립금' },
+  { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역', get: '거래내역 PDF (기간: 지난번 받은 날부터 오늘까지)' },
+  { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀', get: '이용내역 엑셀(.xlsx)' },
+  { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용내역 또는 명세서(.xls)', get: '본인·가족 이용내역(.xls) 또는 이용대금명세서' },
+  { id: 'card_samsung', name: '삼성카드', kind: 'upload', hint: '개인·법인 이용내역', get: '개인·법인 이용내역 엑셀(.xlsx) — 법인은 회사 경비라 소비에서 뺍니다' },
+  { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액', alsoUpload: true,
+    get: 'PDF 3개: 저축예금 거래내역 · 외화예금 거래내역 · 펀드 평가금액(통합계좌 조회)' },
+  { id: 'kis', name: '한국투자증권', kind: 'asset', match: '연금저축|한국투자', hint: '연금저축 평가금액과 원금', alsoUpload: true, withPrincipal: true,
+    get: '앱의 총자산 화면과 펀드 잔고 화면 캡처' },
+  { id: 'crypto', name: '업비트', kind: 'holdings', group: 'crypto', hint: '코인 평가금액', optional: true,
+    get: '투자손익 상세(월별 입금·출금) 캡처 — 코인이 있을 때만' },
+  { id: 'apt', name: '아파트 시세', kind: 'asset', match: '아파트', hint: 'KB시세나 실거래가', get: 'KB시세나 최근 실거래가 (금액만 알려줘도 됨)' },
+  { id: 'housing_sub', name: '주택청약', kind: 'asset', match: '청약', hint: '지금까지 넣은 총액', get: '청약 통장 총 납입액 캡처' },
+  { id: 'metlife', name: '변액유니버셜', kind: 'asset', match: '변액', hint: '보험사 앱의 적립금', get: '메트라이프 앱의 적립금 화면 캡처' },
 ];
 
 export function checklist() {
