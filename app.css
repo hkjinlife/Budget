@@ -107,6 +107,10 @@ h3 { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); font-weight
 .tile .label { font-size: 12px; color: var(--text-secondary); }
 .tile .value { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.tile .sub.gain { font-size: 13px; font-weight: 700; }
+.tile .sub.gain span { white-space: nowrap; }   /* 금액과 % 사이에서만 줄바꿈 */
+.tile .sub.gain.pos { color: var(--good); }
+.tile .sub.gain.neg { color: var(--bad); }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }
 

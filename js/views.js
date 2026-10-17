@@ -1314,12 +1314,16 @@ const otherKind = (name) => (/청약/.test(name) ? '청약' : /연금/.test(name
 export function invest() {
   const { items, total } = assetSummary();
   const inv = state.data.investment;
+  // 한눈에 '원금 대비 얼마 벌었나(잃었나)'가 보이게: 번 돈을 굵게, 원금은 그 아래
+  const gain = (o) => `<div class="sub gain ${o.profit >= 0 ? 'pos' : 'neg'}"><span>${o.profit >= 0 ? '번 돈' : '잃은 돈'} ${M.won(o.profit, { sign: true })}</span>${
+    o.rate && o.profit ? ` <span>(${o.rate > 0 ? '+' : ''}${M.pct(o.rate)})</span>` : ''}</div>`;
   const tile = (label, o) => `<div class="tile"><div class="label">${esc(label)}</div>
     <div class="value">${M.won(o.value)}</div>
     ${o.noPrincipal ? '<div class="sub muted">원금 기록 없음</div>'
-    : o.principal > 0 ? `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })} (${M.pct(o.rate)}) · 원금 ${M.manwon(o.principal)}원</div>`
-    // 넣은 돈보다 더 빼 갔으면(다 팔고 수익을 뺀 경우) 수익률 대신 남긴 돈만 보여준다
-    : `<div class="sub ${o.profit >= 0 ? 'pos' : 'neg'}">팔고 남긴 돈 ${M.won(o.profit, { sign: true })}</div>`}</div>`;
+    : o.principal > 0 ? `${gain(o)}<div class="sub">원금 ${M.manwon(o.principal)}원</div>`
+    // 다 팔았으면 원금 대신 지금까지 넣은 돈 합계에 대한 누적 손익을 보여준다
+    : o.soldOut ? `${gain(o)}<div class="sub">다 팔았음 · 넣은 돈 합계 ${M.manwon(o.inflow)}원</div>`
+    : `<div class="sub gain ${o.profit >= 0 ? 'pos' : 'neg'}">팔고 남긴 돈 ${M.won(o.profit, { sign: true })}</div>`}</div>`;
   return `
   <div class="grid assets" style="margin-bottom:14px">
     ${tile('전체 자산', total)}
@@ -1388,7 +1392,7 @@ function mountInvest() {
         <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
         : `<tr><td>${esc(h.name)}</td>
         <td>${esc(M.GROUP_NAMES[h.group] || h.group)}</td><td>${esc(h.account || '')}</td>
-        <td class="num">${r ? M.won(r.principal) : '<span class="muted">-</span>'}</td>
+        <td class="num">${r ? (r.soldOut ? `${M.won(r.inflow)}<div class="muted">넣은 돈 합계</div>` : M.won(r.principal)) : '<span class="muted">-</span>'}</td>
         <td class="num">${M.won(h.value)}</td>${profitCell(r)}</tr>`;
     }).join('') + others.map((a, i) => {
       const o = { principal: Number(a.principal) || 0, value: Number(a.value) || 0 };

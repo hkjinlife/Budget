@@ -123,7 +123,9 @@ export function investSummary() {
   inv.holdings.forEach((h) => { add(h.group || 'jeonbuk').value += Number(h.value) || 0; });
   Object.values(groups).forEach((g) => {
     g.profit = g.value - g.principal;
-    g.rate = g.principal > 0 ? g.profit / g.principal : null;
+    // 다 팔아 원금(넣은 돈 − 뺀 돈)이 0 이하이면, 지금까지 넣은 돈 합계에 대한 누적 수익률로 본다
+    g.soldOut = g.principal <= 0 && g.inflow > 0;
+    g.rate = g.principal > 0 ? g.profit / g.principal : g.soldOut ? g.profit / g.inflow : null;
   });
   // 전북 안에서 외화예금으로 옮긴 돈은 원금이 아니라 내부 이동 — 달러 성과만 따로 본다
   const fxValue = inv.holdings.filter((h) => h.kind === 'fx').reduce((s, h) => s + (Number(h.value) || 0), 0);
@@ -374,7 +376,7 @@ export const DEFAULT_CHECKLIST = [
   { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용내역 또는 명세서(.xls)', get: '본인·가족 이용내역(.xls) 또는 이용대금명세서' },
   { id: 'card_samsung', name: '삼성카드', kind: 'upload', hint: '개인·법인 이용내역', get: '개인·법인 이용내역 엑셀(.xlsx) — 법인은 회사 경비라 소비에서 뺍니다' },
   { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액', alsoUpload: true,
-    get: 'PDF 3개: 저축예금 거래내역 · 외화예금 거래내역 · 펀드 평가금액(통합계좌 조회)' },
+    get: 'PDF 4개: 저축예금 거래내역 · 외화예금 거래내역 · 외화 잔고(원화 환산액) · 펀드 평가금액(통합계좌 조회)' },
   { id: 'kis', name: '한국투자증권', kind: 'asset', match: '연금저축|한국투자', hint: '연금저축 평가금액과 원금', alsoUpload: true, withPrincipal: true,
     get: '앱의 총자산 화면과 펀드 잔고 화면 캡처' },
   { id: 'crypto', name: '업비트', kind: 'holdings', group: 'crypto', hint: '코인 평가금액', optional: true,
