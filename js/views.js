@@ -1352,7 +1352,10 @@ export function invest() {
         <th class="num">${editable() ? '' : '손익'}</th></tr></thead>
       <tbody id="holdBody"></tbody></table></div>
     ${editable() ? `<p class="muted" style="margin-top:8px">전북·비트코인의 원금은 아래 '원금 입금·출금 내역'으로 계산합니다.
-      그 밖의 자산은 여기 원금 칸에 적으세요. 매달 금액은 월말 정리에서 넣는 게 편합니다.</p>` : ''}
+      그 밖의 자산은 여기 원금 칸에 적으세요. 매달 금액은 월말 정리에서 넣는 게 편합니다.</p>`
+      : `<p class="muted" style="margin-top:8px">펀드별 원금은 은행 화면의 투자원금(지금 가진 펀드를 산 값)입니다.
+      예전에 팔아서 번 돈을 다시 사는 데 쓴 것도 들어가 있어서, 펀드별 손익을 더하면 실제보다 더 잃은 것처럼 보입니다.
+      실제로 넣은 돈 대비 손익은 위 '└ 펀드' 칸을 보세요.</p>`}
   </div>
 
   <details class="card fold" id="flowFold" ${state.ui.flowsOpen ? 'open' : ''}>
@@ -1378,9 +1381,14 @@ function mountInvest() {
   const profitCell = (o) => (o && o.principal
     ? `<td class="num ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })}${o.rate != null ? ` (${M.pct(o.rate)})` : ''}</td>`
     : '<td class="num muted">-</td>');
-  // 전북·비트코인 보유: 원금은 묶음(펀드 전체·외화·비트코인) 단위로만 안다
+  // 전북·비트코인 보유: 원금은 묶음(펀드 전체·외화·비트코인) 단위로만 안다.
+  // 펀드는 은행 화면의 투자원금(appPrincipal)이 있으면 펀드별로 보여준다.
   const holdingResult = (h) => {
     if (h.kind === 'fx') return s.fx;
+    if (h.kind === 'fund' && h.appPrincipal) {
+      const principal = Number(h.appPrincipal), value = Number(h.value) || 0;
+      return { principal, value, profit: value - principal, rate: (value - principal) / principal, bank: true };
+    }
     const same = inv.holdings.filter((x) => (x.group || 'jeonbuk') === (h.group || 'jeonbuk'));
     return same.length === 1 ? s.groups[h.group || 'jeonbuk'] : null;
   };
@@ -1399,7 +1407,9 @@ function mountInvest() {
         <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
         : `<tr><td>${esc(h.name)}</td>
         <td>${esc(M.GROUP_NAMES[h.group] || h.group)}</td><td>${esc(h.account || '')}</td>
-        <td class="num">${r ? (r.soldOut ? `${M.won(r.inflow)}<div class="muted">넣은 돈 합계</div>` : M.won(r.principal)) : '<span class="muted">-</span>'}</td>
+        <td class="num">${r ? (r.soldOut ? `${M.won(r.inflow)}<div class="muted">넣은 돈 합계</div>`
+          : `${M.won(r.principal)}${r.bank ? '<div class="muted">은행 투자원금</div>' : ''}`)
+          : `<span class="muted">${h.kind === 'cash' ? '현금' : '-'}</span>`}</td>
         <td class="num">${M.won(h.value)}</td>${profitCell(r)}</tr>`;
     }).join('') + others.map((a, i) => {
       const o = { principal: Number(a.principal) || 0, value: Number(a.value) || 0 };
