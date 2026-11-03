@@ -147,7 +147,7 @@ export function investSummary() {
   return { groups, fx, fund, total };
 }
 
-export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', etc: '기타' };
+export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', crypto_wife: '코인 (아내)', etc: '기타' };
 
 
 /* ---------- 대출 ---------- */
@@ -374,6 +374,8 @@ export const DEFAULT_CHECKLIST = [
   { id: 'bank_shinhan', name: '신한은행', kind: 'upload', hint: '입출금 거래내역', get: '거래내역 PDF (기간: 지난번 받은 날부터 오늘까지)' },
   { id: 'card_shinhan', name: '신한카드', kind: 'upload', hint: '이용내역 엑셀', get: '이용내역 엑셀(.xlsx)' },
   { id: 'card_hyundai', name: '현대카드', kind: 'upload', hint: '이용내역 또는 명세서(.xls)', get: '본인·가족 이용내역(.xls) 또는 이용대금명세서' },
+  { id: 'bank_shinhan_wife', name: '신한은행 (아내)', kind: 'upload', hint: '아내 통장 거래내역', get: '아내 통장 거래내역 엑셀(.xls) — 지난번 받은 날부터 오늘까지' },
+  { id: 'card_shinhan_wife', name: '신한카드 (아내)', kind: 'upload', hint: '아내 카드 명세서', get: '아내 카드 이용대금명세서(.xls)' },
   { id: 'card_samsung', name: '삼성카드', kind: 'upload', hint: '개인·법인 이용내역', get: '개인·법인 이용내역 엑셀(.xlsx) — 법인은 회사 경비라 소비에서 뺍니다' },
   { id: 'bank_jeonbuk', name: '전북은행', kind: 'holdings', group: 'jeonbuk', hint: '펀드·외화예금 평가금액', alsoUpload: true,
     get: 'PDF 4개: 저축예금 거래내역 · 외화예금 거래내역 · 외화 잔고(원화 환산액) · 펀드 평가금액(통합계좌 조회)' },
@@ -381,6 +383,8 @@ export const DEFAULT_CHECKLIST = [
     get: '앱의 총자산 화면과 펀드 잔고 화면 캡처' },
   { id: 'crypto', name: '업비트', kind: 'holdings', group: 'crypto', hint: '코인 평가금액', optional: true,
     get: '투자손익 상세(월별 입금·출금) 캡처 — 코인이 있을 때만' },
+  { id: 'crypto_wife', name: '업비트 (아내)', kind: 'holdings', group: 'crypto_wife', hint: '아내 코인 평가금액',
+    get: '아내 업비트 보유자산 화면 캡처 + 케이뱅크 거래내역(엑셀)' },
   { id: 'apt', name: '아파트 시세', kind: 'asset', match: '아파트', hint: 'KB시세나 실거래가', get: 'KB시세나 최근 실거래가 (금액만 알려줘도 됨)' },
   { id: 'housing_sub', name: '주택청약', kind: 'asset', match: '청약', hint: '지금까지 넣은 총액', get: '청약 통장 총 납입액 캡처' },
   { id: 'metlife', name: '변액유니버셜', kind: 'asset', match: '변액', hint: '보험사 앱의 적립금', get: '메트라이프 앱의 적립금 화면 캡처' },

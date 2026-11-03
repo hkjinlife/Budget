@@ -110,6 +110,13 @@ function parseShinhanStatement(text) {
       date, time: '', cardRaw, accountId: acct ? acct.id : '', owner: acct ? acct.owner : '',
       type: 'expense', source: 'import:신한카드명세서',
     };
+    // 해외이용은 이용금액이 외화(예: 39.95달러, 150엔)라서 원화 납부금액 + 해외 수수료를 쓴다. 0원(취소·미청구)은 건너뛴다.
+    // 국내 일시불은 납부금액이 이용금액보다 클 수 없으니, 크면 해외로 본다.
+    const krw = num(paidText) + num(c[7]);
+    if (!months && (/\.\d\d$/.test(usedText) || krw > num(usedText) || (!krw && !/[가-힣]/.test(merchant)))) {
+      if (krw > 0) rows.push({ ...base, merchant, amount: -krw, memo: `${cardRaw} · 해외 ${usedText}` });
+      return;
+    }
     const used = num(usedText);
     rows.push({ ...base, merchant, amount: -used, memo: cardRaw });
     // 할인은 따로 한 줄(+)로 넣는다. 실시간 내역·다른 달 명세서와 같은 거래로 맞춰지게 결제 줄은 이용금액 그대로 둔다.
