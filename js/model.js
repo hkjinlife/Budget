@@ -150,6 +150,61 @@ export function investSummary() {
 export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', crypto_wife: '코인 (아내)', etc: '기타' };
 
 
+/* ---------- 보험 ---------- */
+// 카드·통장마다 보험사 이름이 다르게 찍혀서(예: '현대08 003', 'METLIFE10232', 'DB손00310') 이름으로 보험사를 알아낸다
+export const INSURERS = [
+  ['메리츠화재', /메리츠/], ['DB손해보험 (동부)', /DB손|동부화재/], ['현대해상', /현대해상|^현대\d\d \d{3}$/],
+  ['예별손해보험', /예별/], ['메트라이프', /METLIFE|메트라이프/i], ['삼성생명', /삼성생명/], ['삼성화재', /삼성화재/],
+  ['한화', /한화(생명|손해|손보)/], ['KB손해보험', /KB손/], ['흥국', /흥국/], ['교보생명', /교보/], ['라이나', /라이나/],
+];
+
+export function insurerOf(t) {
+  const m = t.merchant || '';
+  const hit = INSURERS.find(([, re]) => re.test(m));
+  if (hit) return hit[0];
+  if (/자동차/.test(t.memo || '')) return '자동차 보험';
+  return m.replace(/\s*\d{2}월-?보험료/, '').replace(/\d{3,}$/, '').trim() || '기타';
+}
+
+/**
+ * '보험' 분류 결제를 보험사 × 내는 사람으로 묶는다 (최근 12개월).
+ * 12개월 중 3달 이상 낸 것은 '매달', 그보다 적으면 '가끔'(연납·자동차 보험 등)으로 본다.
+ */
+export function insuranceSummary(txs = visibleTx()) {
+  const d = new Date();
+  const ym = (y, m) => `${y + Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, '0')}`;
+  const to = ym(d.getFullYear(), d.getMonth());
+  const from = ym(d.getFullYear() - 1, d.getMonth() + 1);
+  const map = new Map();
+  txs.filter((t) => isSpend(t) && t.categoryId === 'insurance').forEach((t) => {
+    const mo = t.date.slice(0, 7);
+    if (mo < from || mo > to) return;
+    const insurer = insurerOf(t);
+    const key = `${insurer}|${t.owner}`;
+    const g = map.get(key) || { key, insurer, owner: t.owner, accounts: new Set(), total: 0, months: new Set(), last: '', rows: [] };
+    g.accounts.add(t.accountId);
+    g.total += -t.amount;
+    if (t.amount < 0) g.months.add(mo);
+    if (t.amount < 0 && t.date > g.last) g.last = t.date;
+    g.rows.push(t);
+    map.set(key, g);
+  });
+  const groups = [...map.values()].map((g) => {
+    const lastMonth = g.last.slice(0, 7);
+    const lastPays = g.rows.filter((t) => t.amount < 0 && t.date.startsWith(lastMonth)).map((t) => -t.amount).sort((a, b) => b - a);
+    return { ...g, accounts: [...g.accounts], regular: g.months.size >= 3, lastMonth, lastPays,
+      lastTotal: lastPays.reduce((s, a) => s + a, 0) };
+  }).sort((a, b) => b.total - a.total);
+  const regular = groups.filter((g) => g.regular);
+  return {
+    from, to, groups,
+    monthly: regular.reduce((s, g) => s + g.lastTotal, 0),
+    total: groups.reduce((s, g) => s + g.total, 0),
+    rows: groups.flatMap((g) => g.rows.map((t) => ({ ...t, insurer: g.insurer }))).sort((a, b) => (a.date < b.date ? 1 : -1)),
+  };
+}
+
+
 /* ---------- 대출 ---------- */
 export const LOAN_TYPES = {
   equal_payment: '원리금균등',

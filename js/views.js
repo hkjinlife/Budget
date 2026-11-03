@@ -2593,12 +2593,79 @@ function mountSettings() {
   }
 }
 
+/* ================= 보험 ================= */
+// '보험' 분류 결제를 보험사별로 모아 본다. 보험마다 무엇을 보장하는지는 메모로 적어 둔다(insuranceNotes).
+function insuranceView() {
+  const s = M.insuranceSummary();
+  const notes = state.data.insuranceNotes || {};
+  const saving = (state.data.otherAssets || []).filter((a) => otherKind(a.name) === '보험');
+  const ed = editable();
+  const ym = (m) => `${Number(m.slice(5))}월`;
+  const pays = (g) => (g.lastPays.length > 1 && g.lastPays.length <= 4
+    ? `<div class="muted" style="white-space:normal;max-width:96px;margin-left:auto">${g.lastPays.map((a) => a.toLocaleString('ko-KR')).join(' + ')}</div>` : '');
+  const row = (g) => `<tr>
+      <td><b>${esc(g.insurer)}</b>${g.regular ? '' : ' <span class="badge">가끔</span>'}<div class="muted">${esc(M.userName(g.owner))}</div></td>
+      <td class="num">${M.won(g.lastTotal)}<div class="muted">${ym(g.lastMonth)}</div>${pays(g)}</td>
+      <td class="num">${M.won(g.total)}<div class="muted">${g.months.size}번</div></td>
+      <td>${g.accounts.map((a) => esc(acctShort(a))).join(', ')}</td>
+      <td style="white-space:normal;min-width:140px">${ed
+    ? `<input data-insnote="${esc(g.key)}" value="${esc(notes[g.key] || '')}" placeholder="예: 실손·암 보장" style="min-width:140px">`
+    : esc(notes[g.key] || '')}</td></tr>`;
+  if (!s.groups.length) {
+    return `<div class="card"><h2>보험료 기록이 없습니다</h2>
+      <p class="muted">거래내역에서 보험료 결제의 분류를 '보험'으로 바꾸면 여기에 보험사별로 모입니다.</p></div>`;
+  }
+  return `
+  <div class="grid" style="margin-bottom:14px">
+    <div class="tile"><div class="label">매달 내는 보험료</div><div class="value">${M.won(s.monthly)}</div>
+      <div class="sub">매달 내는 보험의 가장 최근 달 금액</div></div>
+    <div class="tile"><div class="label">최근 12개월 낸 보험료</div><div class="value">${M.won(s.total)}</div>
+      <div class="sub">${s.from.slice(2, 4)}년 ${ym(s.from)}~${s.to.slice(2, 4)}년 ${ym(s.to)} · 가끔 내는 보험 포함</div></div>
+    <div class="tile"><div class="label">보험사</div><div class="value">${new Set(s.groups.map((g) => g.insurer)).size}곳</div>
+      <div class="sub">${s.groups.filter((g) => g.regular).length}건은 매달, ${s.groups.filter((g) => !g.regular).length}건은 가끔</div></div>
+    ${saving.length ? `<div class="tile"><div class="label">보험 적립금</div>
+      <div class="value">${M.won(saving.reduce((t, a) => t + (Number(a.value) || 0), 0))}</div>
+      <div class="sub">${saving.map((a) => esc(a.name)).join(', ')} · 투자 탭과 같은 값</div></div>` : ''}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>보험사별 보험료</h2><span class="muted">최근 12개월 · 사람별</span></div>
+    <div class="table-wrap"><table class="sticky-first">
+      <thead><tr><th>보험사 · 내는 사람</th><th class="num">최근 달</th><th class="num">12개월 합계</th><th>결제 수단</th><th>메모</th></tr></thead>
+      <tbody>${s.groups.map(row).join('')}</tbody></table></div>
+    <p class="muted" style="margin-top:8px">결제 기록 중 분류가 '보험'인 것을 보험사 이름으로 묶었습니다. 빠진 보험료가 있으면 거래내역에서 분류를 '보험'으로 바꾸세요.
+      ${ed ? '메모 칸에 무엇을 보장하는 보험인지 적어 두면 함께 보입니다.' : "메모는 위쪽 '편집'을 누르면 적을 수 있습니다."}</p>
+  </div>
+
+  <div class="card">
+    <details class="more"><summary><h2 style="display:inline">결제 기록</h2> <span class="muted">${s.rows.length}건</span></summary>
+    <div class="table-wrap" style="margin-top:8px"><table>
+      <thead><tr><th>날짜</th><th>보험사</th><th>내용</th><th>사람</th><th>수단</th><th class="num">금액</th></tr></thead>
+      <tbody>${s.rows.map((t) => `<tr><td>${t.date.slice(5)}</td><td>${esc(t.insurer)}</td><td>${esc(t.merchant)}</td>
+        <td>${esc(M.userName(t.owner))}</td><td>${esc(acctShort(t.accountId))}</td>
+        <td class="num ${t.amount > 0 ? 'pos' : ''}">${M.won(-t.amount)}</td></tr>`).join('')}</tbody></table></div>
+    </details>
+  </div>`;
+}
+
+function mountInsurance() {
+  document.querySelectorAll('[data-insnote]').forEach((el) => {
+    el.onchange = () => {
+      state.data.insuranceNotes ||= {};
+      const v = el.value.trim();
+      if (v) state.data.insuranceNotes[el.dataset.insnote] = v; else delete state.data.insuranceNotes[el.dataset.insnote];
+      touch();
+    };
+  });
+}
+
 /* ================= 라우팅 ================= */
 const VIEWS = {
   dashboard: [dashboard, mountDashboard],
   transactions: [transactions, mountTransactions],
   entry: [entry, mountEntry],
   invest: [invest, mountInvest],
+  insurance: [insuranceView, mountInsurance],
   loan: [loanView, mountLoan],
   gift: [giftView, mountGift],
   monthly: [monthlyView, mountMonthly],

@@ -505,7 +505,7 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
   mine.accounts = mergeList(mine.accounts, incoming.accounts, newer, 'match');
   // 나머지 설정(사용자·대출·자산·투자)은 더 최근에 저장된 파일 것을 쓴다
   if (newer) {
-    ['users', 'loans', 'otherAssets', 'budgets', 'checklist'].forEach((k) => {
+    ['users', 'loans', 'otherAssets', 'budgets', 'checklist', 'insuranceNotes'].forEach((k) => {
       if (incoming[k]) mine[k] = incoming[k];
     });
     if (incoming.investment) mine.investment = incoming.investment;
