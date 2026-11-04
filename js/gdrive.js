@@ -274,9 +274,10 @@ export async function push({ merge, force = false, interactive = true } = {}) {
   const tk = await token({ interactive });
   drive.busy = true; emitDrive('저장 중…');
   try {
-    if (!force && drive.lastModified) {
-      const info = await meta();
-      if (info.modifiedTime !== drive.lastModified) {
+    // 이번에 한 번도 받아오지 않았으면(lastModified 없음) 무조건 먼저 받아 합친다 — 옛 데이터로 덮어쓰지 않게
+    if (!force) {
+      const info = drive.lastModified ? await meta() : null;
+      if (!info || info.modifiedTime !== drive.lastModified) {
         emitDrive('다른 기기의 변경을 먼저 합치는 중…');
         await pull({ merge, interactive: false });
       }

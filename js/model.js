@@ -110,6 +110,31 @@ export function fullMonths() {
 }
 
 /* ---------- 투자 ---------- */
+/**
+ * 지금 보는 사람(통합/남편/아내)이 이 자산을 얼마나 가졌는지 (0~1).
+ * owner: 한 사람 id, shares: { id: 0.5, ... } (공동명의). 둘 다 없으면 주인을 몰라 어느 탭에서나 다 보인다.
+ */
+export function shareOf(item, user = state.ui.user) {
+  if (!item || user === 'all') return 1;
+  if (item.shares) return Number(item.shares[user]) || 0;
+  if (item.owner) return item.owner === user ? 1 : 0;
+  return 1;
+}
+
+/** 투자 묶음(전북·업비트 등)의 주인: investment.groupOwners[묶음] = 'id' 또는 { id: 비율 } */
+export function groupShare(group, user = state.ui.user) {
+  const o = state.data.investment?.groupOwners?.[group || 'jeonbuk'];
+  return shareOf(typeof o === 'string' ? { owner: o } : o ? { shares: o } : null, user);
+}
+
+/** 주인이 적혀 있지 않은 자산이 있는지 (사람별 탭에서 '전부 보임' 안내용) */
+export function hasUnownedAssets() {
+  const inv = state.data.investment || {};
+  const groups = new Set([...(inv.flows || []), ...(inv.holdings || [])].map((x) => x.group || 'jeonbuk'));
+  return [...groups].some((g) => !inv.groupOwners?.[g])
+    || (state.data.otherAssets || []).some((a) => !a.owner && !a.shares);
+}
+
 export function investSummary() {
   const inv = state.data.investment;
   const groups = {};
@@ -121,6 +146,12 @@ export function investSummary() {
     g.principal += f.amount;
   });
   inv.holdings.forEach((h) => { add(h.group || 'jeonbuk').value += Number(h.value) || 0; });
+  // 사람별 탭: 그 사람 몫만 남긴다 (공동이면 비율만큼)
+  Object.entries(groups).forEach(([k, g]) => {
+    const sh = groupShare(k);
+    if (!sh) { delete groups[k]; return; }
+    if (sh !== 1) ['inflow', 'outflow', 'principal', 'value', 'internal'].forEach((f) => { g[f] = Math.round(g[f] * sh); });
+  });
   Object.values(groups).forEach((g) => {
     g.profit = g.value - g.principal;
     // 다 팔아 원금(넣은 돈 − 뺀 돈)이 0 이하이면, 지금까지 넣은 돈 합계에 대한 누적 수익률로 본다
@@ -128,7 +159,7 @@ export function investSummary() {
     g.rate = g.principal > 0 ? g.profit / g.principal : g.soldOut ? g.profit / g.inflow : null;
   });
   // 전북 안에서 외화예금으로 옮긴 돈은 원금이 아니라 내부 이동 — 달러 성과만 따로 본다
-  const fxValue = inv.holdings.filter((h) => h.kind === 'fx').reduce((s, h) => s + (Number(h.value) || 0), 0);
+  const fxValue = Math.round(inv.holdings.filter((h) => h.kind === 'fx').reduce((s, h) => s + (Number(h.value) || 0), 0) * groupShare('jeonbuk'));
   const jb = groups.jeonbuk;
   const fx = jb && jb.internal ? {
     principal: -jb.internal, value: fxValue,
@@ -363,7 +394,7 @@ export function report(month) {
     surplus, fixedRatio, changes, big,
     recurring: recurringPayments(txs).slice(0, 12),
     invest: inv, loan,
-    netWorth: inv.total.value + (state.data.otherAssets || []).reduce((a, x) => a + (x.value || 0), 0) - loan.balance,
+    netWorth: inv.total.value + (state.data.otherAssets || []).reduce((a, x) => a + (x.value || 0) * shareOf(x), 0) - loan.balance,
   };
 }
 

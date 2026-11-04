@@ -230,6 +230,7 @@ export async function boot() {
     } catch { state.data = emptyData(); }   // 오프라인이거나 파일이 없을 때
   }
   normalize(state.data);
+  snapshotSections();
   if (!state.ui.month) state.ui.month = latestMonth();
   emit();
 }
@@ -256,6 +257,9 @@ function normalize(d) {
   d.otherAssets ||= [];
   d.gifts ||= [];
   d.memos ||= [];
+  // 묶음별 마지막으로 고친 시각. 기록이 없던 파일은 파일 저장 시각으로 시작한다
+  d.sectionMt ||= {};
+  SECTIONS.forEach((k) => { d.sectionMt[k] ||= d.updatedAt || ''; });
   // 한 번만 있는 큰 지출(가전·수리 등)을 모으는 카테고리. 예전 데이터에도 넣어준다
   if (d.categories.length && !d.categories.some((c) => c.id === 'once_big')) {
     d.categories.push({ id: 'once_big', name: '일회성 큰 지출', major: '일회성', keywords: '' });
@@ -283,6 +287,27 @@ export function latestMonth() {
   return ms.length ? ms[ms.length - 1] : today().slice(0, 7);
 }
 
+/* ---------- 묶음별 고친 시각 ----------
+ * 대출·자산·투자 같은 설정 묶음은 통째로 합친다. 예전에는 파일 저장 시각(updatedAt)이 늦은 쪽 것을 썼는데,
+ * 옛 데이터를 가진 기기에서 메모 하나만 고쳐도 그 기기의 묶음이 전부 이겨서 최신 투자·대출이 옛것으로 덮였다 (2026-11-04).
+ * 그래서 묶음마다 실제로 고친 시각(sectionMt)을 따로 적고, 합칠 때는 그 시각으로 고른다. */
+const SECTIONS = ['users', 'loans', 'otherAssets', 'budgets', 'checklist', 'insuranceNotes', 'investment'];
+let sectionSnap = {};      // 마지막으로 불러오거나 합친 뒤 묶음의 모습 — 무엇을 고쳤는지 알아내는 데 쓴다
+const snapOf = (d, k) => JSON.stringify(d[k] ?? null);
+
+export function snapshotSections(d = state.data) {
+  sectionSnap = Object.fromEntries(SECTIONS.map((k) => [k, snapOf(d, k)]));
+}
+
+/** 마지막 기록 이후 바뀐 묶음에 지금 시각을 적는다 */
+function stampSections(d, at) {
+  d.sectionMt ||= {};
+  SECTIONS.forEach((k) => {
+    const s = snapOf(d, k);
+    if (s !== sectionSnap[k]) { d.sectionMt[k] = at; sectionSnap[k] = s; }
+  });
+}
+
 /* ---------- 저장 ---------- */
 let autoSaveTimer = null;
 
@@ -290,6 +315,8 @@ let autoSaveTimer = null;
 export function touch({ stamp } = {}) {
   state.dirty = true;
   state.data.updatedAt = stamp || new Date().toISOString().slice(0, 19);
+  // 직접 고친 것이면 바뀐 묶음에 시각을 적고, 합치기만 한 것이면 지금 모습을 기준으로 삼는다
+  if (stamp) snapshotSections(); else stampSections(state.data, state.data.updatedAt);
   try { localStorage.setItem(LS_KEY, JSON.stringify(state.data)); } catch { /* 용량 초과 */ }
   emit();
   // 공유 폴더 파일이 연결돼 있으면 잠시 뒤 자동으로 저장한다
@@ -316,6 +343,7 @@ export async function connectFile({ create = false } = {}) {
     const file = await handle.getFile();
     state.data = JSON.parse(await file.text());
     normalize(state.data);
+    snapshotSections();
   }
   state.dirty = false;
   emit();
@@ -437,6 +465,8 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
   if (mode === 'replace' || !state.data?.transactions?.length) {
     state.data = incoming;
     normalize(state.data);
+    // 처음 받아온 것은 고친 게 아니다. 사용자가 직접 고른 파일로 바꾼 경우만 이 기기에서 새로 고친 것으로 본다
+    if (mode !== 'replace') snapshotSections();
     touch();
     return { mode: 'replace', total: incoming.transactions.length, added: 0, updated: 0 };
   }
@@ -516,13 +546,15 @@ export function applyIncoming(incoming, { mode = 'merge', preferIncoming = false
   // 카테고리·계좌는 id로 합친다 (새로 생긴 것, 더한 키워드·카드번호는 어느 쪽이든 살린다)
   mine.categories = mergeList(mine.categories, incoming.categories, newer, 'keywords');
   mine.accounts = mergeList(mine.accounts, incoming.accounts, newer, 'match');
-  // 나머지 설정(사용자·대출·자산·투자)은 더 최근에 저장된 파일 것을 쓴다
-  if (newer) {
-    ['users', 'loans', 'otherAssets', 'budgets', 'checklist', 'insuranceNotes'].forEach((k) => {
-      if (incoming[k]) mine[k] = incoming[k];
-    });
-    if (incoming.investment) mine.investment = incoming.investment;
-  }
+  // 나머지 설정 묶음(사용자·대출·자산·투자 등)은 묶음마다 더 최근에 고친 쪽 것을 쓴다.
+  // 시각이 같으면 받아온 쪽(드라이브)을 따른다 — 이 기기가 그 묶음을 고치지 않았다는 뜻이라서.
+  mine.sectionMt ||= {};
+  SECTIONS.forEach((k) => {
+    if (incoming[k] === undefined) return;
+    const theirs = incoming.sectionMt?.[k] || '';
+    const ours = mine.sectionMt[k] || '';
+    if (preferIncoming || theirs >= ours) { mine[k] = incoming[k]; mine.sectionMt[k] = theirs; }
+  });
   normalize(mine);
   // 합치기만 한 것은 '고친 것'이 아니다. 저장 시각을 지금으로 올리면 이 기기가 늘 더 최신으로 보여
   // 다른 기기에서 고친 설정이 무시되므로, 두 쪽 중 늦은 시각을 쓴다.

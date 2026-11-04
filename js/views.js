@@ -1278,6 +1278,15 @@ function mountMonthly() {
 }
 
 /* ================= 투자 ================= */
+/** 지금 보는 사람 몫의 기타 자산: [{ a(원래 항목), i(원래 순서), share, value, principal }] */
+function myOtherAssets() {
+  return (state.data.otherAssets || []).map((a, i) => {
+    const share = M.shareOf(a);
+    return { a, i, share, value: Math.round((Number(a.value) || 0) * share), principal: Math.round((Number(a.principal) || 0) * share) };
+  }).filter((o) => o.share > 0);
+}
+const shareText = (share) => `공동 ${Math.round(share * 100)}%`;
+
 /** 투자(전북·비트코인)와 기타 자산(아파트·연금 등)을 한 목록으로 모은다.
  *  위 요약 칸·그래프·표가 모두 이 목록을 써서, 자산을 추가하면 세 곳에 함께 나타난다 */
 function assetSummary() {
@@ -1293,22 +1302,22 @@ function assetSummary() {
     const name = M.GROUP_NAMES[k] || k;
     items.push({ label: name, chart: short(name), ...g });
   });
-  (state.data.otherAssets || []).forEach((a) => {
-    const value = Number(a.value) || 0;
-    const principal = Number(a.principal) || 0;
+  // 기타 자산은 지금 보는 사람 몫만 (공동명의면 비율만큼)
+  const others = myOtherAssets();
+  others.forEach(({ a, share, value, principal }) => {
     // 원금을 모르면 손익을 셀 수 없으니 평가금액을 원금으로 본다 (전체 손익이 부풀지 않게)
-    items.push({ label: a.name, chart: short(a.name), ...withRate({ value, principal: principal || value }), noPrincipal: !principal });
+    items.push({ label: a.name + (share < 1 ? ` (${shareText(share)})` : ''), chart: short(a.name),
+      ...withRate({ value, principal: principal || value }), noPrincipal: !principal });
   });
   const total = withRate({
-    value: s.total.value + (state.data.otherAssets || []).reduce((t, a) => t + (Number(a.value) || 0), 0),
-    principal: s.total.principal + (state.data.otherAssets || [])
-      .reduce((t, a) => t + (Number(a.principal) || Number(a.value) || 0), 0),
+    value: s.total.value + others.reduce((t, o) => t + o.value, 0),
+    principal: s.total.principal + others.reduce((t, o) => t + (o.principal || o.value), 0),
   });
   // 부동산(아파트 등)을 뺀 투자만의 손익 — 집값과 섞이지 않게 따로 본다
-  const homes = (state.data.otherAssets || []).filter((a) => otherKind(a.name) === '부동산');
+  const homes = others.filter((o) => otherKind(o.a.name) === '부동산');
   const invested = homes.length ? withRate({
-    value: total.value - homes.reduce((t, a) => t + (Number(a.value) || 0), 0),
-    principal: total.principal - homes.reduce((t, a) => t + (Number(a.principal) || Number(a.value) || 0), 0),
+    value: total.value - homes.reduce((t, o) => t + o.value, 0),
+    principal: total.principal - homes.reduce((t, o) => t + (o.principal || o.value), 0),
   }) : null;
   return { s, items, total, invested };
 }
@@ -1330,7 +1339,10 @@ export function invest() {
     // 다 팔았으면 원금 대신 지금까지 넣은 돈 합계에 대한 누적 손익을 보여준다
     : o.soldOut ? `${gain(o)}<div class="sub">다 팔았음 · 넣은 돈 합계 ${M.manwon(o.inflow)}원</div>`
     : `<div class="sub gain ${o.profit >= 0 ? 'pos' : 'neg'}">팔고 남긴 돈 ${M.won(o.profit, { sign: true })}</div>`}</div>`;
+  const who = state.ui.user === 'all' ? null : M.userName(state.ui.user);
   return `
+  ${who ? `<div class="notice" style="margin-bottom:12px"><b>${esc(who)}</b> 몫만 보여줍니다. 공동명의는 비율만큼 나눠서 셉니다.
+    ${M.hasUnownedAssets() ? '주인이 적혀 있지 않은 자산은 어느 사람 탭에서나 전부 보입니다.' : ''}</div>` : ''}
   <div class="grid assets" style="margin-bottom:14px">
     ${tile('전체 자산', total, 'wide')}
     ${invested ? tile('투자 자산 (부동산 제외)', invested, 'wide') : ''}
@@ -1359,7 +1371,7 @@ export function invest() {
   </div>
 
   <details class="card fold" id="flowFold" ${state.ui.flowsOpen ? 'open' : ''}>
-    <summary><h2>원금 입금·출금 내역</h2><span class="muted">${(inv.flows || []).length}건</span></summary>
+    <summary><h2>원금 입금·출금 내역</h2><span class="muted">${(inv.flows || []).filter((f) => M.groupShare(f.group)).length}건</span></summary>
     ${editable() ? '<div class="btn-row" style="margin-bottom:8px"><button class="btn" id="addFlow">+ 내역 추가</button></div>' : ''}
     <p class="muted">입금은 양수(+), 출금은 음수(−). '원금 반영'을 끄면 계좌 안에서 옮긴 돈으로 보고 원금에서 뺍니다.</p>
     <div class="table-wrap"><table>
@@ -1386,17 +1398,28 @@ function mountInvest() {
   const holdingResult = (h) => {
     if (h.kind === 'fx') return s.fx;
     if (h.kind === 'fund' && h.appPrincipal) {
-      const principal = Number(h.appPrincipal), value = Number(h.value) || 0;
+      const sh = M.groupShare(h.group);
+      const principal = Math.round(Number(h.appPrincipal) * sh), value = Math.round((Number(h.value) || 0) * sh);
       return { principal, value, profit: value - principal, rate: (value - principal) / principal, bank: true };
     }
     const same = inv.holdings.filter((x) => (x.group || 'jeonbuk') === (h.group || 'jeonbuk'));
     return same.length === 1 ? s.groups[h.group || 'jeonbuk'] : null;
   };
 
+  // 기타 자산의 주인 고르기: 한 사람 / 공동(반반) / 모름
+  const ownerOpts = (a) => {
+    const cur = a.shares ? 'joint' : a.owner || '';
+    return [['', '주인 모름'], ...state.data.users.map((u) => [u.id, u.name]), ['joint', '공동 (반반)']]
+      .map(([v, t]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  };
+
   const draw = () => {
     const ed = editable();
     const others = state.data.otherAssets || [];
     document.getElementById('holdBody').innerHTML = inv.holdings.map((h, i) => {
+      // 보기 모드에서는 지금 보는 사람 몫만 (고칠 때는 전부 보여야 고칠 수 있다)
+      const sh = M.groupShare(h.group);
+      if (!ed && !sh) return '';
       const r = holdingResult(h);
       return ed ? `<tr data-hold-i="${i}">
         <td><input data-f="name" value="${esc(h.name)}" style="min-width:170px"></td>
@@ -1410,19 +1433,22 @@ function mountInvest() {
         <td class="num">${r ? (r.soldOut ? `${M.won(r.inflow)}<div class="muted">넣은 돈 합계</div>`
           : `${M.won(r.principal)}${r.bank ? '<div class="muted">은행 투자원금</div>' : ''}`)
           : `<span class="muted">${h.kind === 'cash' ? '현금' : '-'}</span>`}</td>
-        <td class="num">${M.won(h.value)}</td>${profitCell(r)}</tr>`;
+        <td class="num">${M.won(Math.round((Number(h.value) || 0) * sh))}</td>${profitCell(r)}</tr>`;
     }).join('') + others.map((a, i) => {
-      const o = { principal: Number(a.principal) || 0, value: Number(a.value) || 0 };
+      const sh = M.shareOf(a);
+      if (!ed && !sh) return '';
+      const k = ed ? 1 : sh;     // 고칠 때는 원래 금액, 볼 때는 그 사람 몫
+      const o = { principal: Math.round((Number(a.principal) || 0) * k), value: Math.round((Number(a.value) || 0) * k) };
       o.profit = o.value - o.principal;
       o.rate = o.principal > 0 ? o.profit / o.principal : null;
       return ed ? `<tr data-other-i="${i}">
         <td><input data-f="name" value="${esc(a.name)}" style="min-width:170px"></td>
-        <td class="muted">${otherKind(a.name)}</td>
+        <td><select data-f="owner">${ownerOpts(a)}</select><div class="muted">${otherKind(a.name)}</div></td>
         <td><input data-f="memo" value="${esc(a.memo || '')}" style="min-width:120px"></td>
         <td class="num"><input data-f="principal" type="number" inputmode="numeric" value="${o.principal}" style="min-width:120px;text-align:right"></td>
         <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${o.value}" style="min-width:120px;text-align:right"></td>
         <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
-        : `<tr><td>${esc(a.name)}</td><td>${otherKind(a.name)}</td>
+        : `<tr><td>${esc(a.name)}</td><td>${otherKind(a.name)}${sh < 1 ? `<div class="muted">${shareText(sh)}</div>` : ''}</td>
         <td>${esc(a.memo || '')}${a.updatedAt ? ` <span class="muted">${esc(a.updatedAt.slice(5))}</span>` : ''}</td>
         <td class="num">${o.principal ? M.won(o.principal) : '<span class="muted">-</span>'}</td>
         <td class="num">${M.won(o.value)}</td>${profitCell(o)}</tr>`;
@@ -1445,6 +1471,13 @@ function mountInvest() {
           return;
         }
         el.onchange = () => {
+          if (f === 'owner') {
+            delete obj.owner; delete obj.shares;
+            if (el.value === 'joint') obj.shares = Object.fromEntries(state.data.users.map((u) => [u.id, 1 / state.data.users.length]));
+            else if (el.value) obj.owner = el.value;
+            touch(); render();
+            return;
+          }
           obj[f] = el.type === 'number' ? Number(el.value) || 0 : el.value;
           if (!isHold && f === 'value') obj.updatedAt = today();
           touch(); render();
@@ -1466,7 +1499,7 @@ function mountInvest() {
         <td><input data-f="include" type="checkbox" ${f.include !== false ? 'checked' : ''}></td>
         <td style="white-space:normal;max-width:220px"><span class="muted">${esc(f.note || '')}</span></td>
         <td><button class="btn btn-quiet" data-f="del">✕</button></td>
-      </tr>` : `
+      </tr>` : !M.groupShare(f.group) ? '' : `
       <tr><td>${esc(f.date)}</td><td style="white-space:normal;min-width:150px">${esc(f.memo || '')}</td>
         <td>${esc(M.GROUP_NAMES[f.group] || f.group)}</td>
         <td class="num ${f.amount < 0 ? 'neg' : ''}">${M.won(f.amount, { sign: true })}</td>
@@ -2598,7 +2631,7 @@ function mountSettings() {
 function insuranceView() {
   const s = M.insuranceSummary();
   const notes = state.data.insuranceNotes || {};
-  const saving = (state.data.otherAssets || []).filter((a) => otherKind(a.name) === '보험');
+  const saving = myOtherAssets().filter((o) => otherKind(o.a.name) === '보험');
   const ed = editable();
   const ym = (m) => `${Number(m.slice(5))}월`;
   const pays = (g) => (g.lastPays.length > 1 && g.lastPays.length <= 4
@@ -2624,8 +2657,8 @@ function insuranceView() {
     <div class="tile"><div class="label">보험사</div><div class="value">${new Set(s.groups.map((g) => g.insurer)).size}곳</div>
       <div class="sub">${s.groups.filter((g) => g.regular).length}건은 매달, ${s.groups.filter((g) => !g.regular).length}건은 가끔</div></div>
     ${saving.length ? `<div class="tile"><div class="label">보험 적립금</div>
-      <div class="value">${M.won(saving.reduce((t, a) => t + (Number(a.value) || 0), 0))}</div>
-      <div class="sub">${saving.map((a) => esc(a.name)).join(', ')} · 투자 탭과 같은 값</div></div>` : ''}
+      <div class="value">${M.won(saving.reduce((t, o) => t + o.value, 0))}</div>
+      <div class="sub">${saving.map((o) => esc(o.a.name)).join(', ')} · 투자 탭과 같은 값</div></div>` : ''}
   </div>
 
   <div class="card">
