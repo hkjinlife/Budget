@@ -1294,12 +1294,12 @@ function assetSummary() {
   const withRate = (o) => ({ ...o, profit: o.value - o.principal, rate: o.principal > 0 ? (o.value - o.principal) / o.principal : null });
   const short = (name) => String(name || '').replace(/\s*\(.*?\)\s*/g, ' ').trim();   // 그래프 이름은 괄호를 뺀다
   const items = [];     // { label, chart(그래프 이름, 없으면 요약 칸에만), value, principal, profit, rate, noPrincipal }
-  if (s.groups.jeonbuk) items.push({ label: M.GROUP_NAMES.jeonbuk, ...s.groups.jeonbuk });
+  if (s.groups.jeonbuk) items.push({ label: M.groupLabel('jeonbuk'), ...s.groups.jeonbuk });
   if (s.fund) items.push({ label: '└ 펀드', chart: '펀드', ...s.fund });
   if (s.fx) items.push({ label: '└ 외화예금', chart: '외화예금', ...s.fx });
   Object.entries(s.groups).forEach(([k, g]) => {
     if (k === 'jeonbuk') return;
-    const name = M.GROUP_NAMES[k] || k;
+    const name = M.groupLabel(k);
     items.push({ label: name, chart: short(name), ...g });
   });
   // 기타 자산은 지금 보는 사람 몫만 (공동명의면 비율만큼)
@@ -1388,8 +1388,8 @@ function mountInvest() {
   const { s, items } = assetSummary();
   investChart(document.getElementById('chartInvest'), items.filter((o) => o.chart).map((o) => ({ ...o, name: o.chart })));
 
-  const groupOpts = (sel) => Object.entries(M.GROUP_NAMES)
-    .map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  const groupOpts = (sel) => Object.keys(M.GROUP_NAMES)
+    .map((k) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(M.groupLabel(k))}</option>`).join('');
   const profitCell = (o) => (o && o.principal
     ? `<td class="num ${o.profit >= 0 ? 'pos' : 'neg'}">${M.won(o.profit, { sign: true })}${o.rate != null ? ` (${M.pct(o.rate)})` : ''}</td>`
     : '<td class="num muted">-</td>');
@@ -1429,7 +1429,7 @@ function mountInvest() {
         <td class="num"><input data-f="value" type="number" inputmode="numeric" value="${h.value}" style="min-width:120px;text-align:right"></td>
         <td><button class="btn btn-quiet" data-f="del">✕</button></td></tr>`
         : `<tr><td>${esc(h.name)}</td>
-        <td>${esc(M.GROUP_NAMES[h.group] || h.group)}</td><td>${esc(h.account || '')}</td>
+        <td>${esc(M.groupLabel(h.group || 'jeonbuk'))}</td><td>${esc(h.account || '')}</td>
         <td class="num">${r ? (r.soldOut ? `${M.won(r.inflow)}<div class="muted">넣은 돈 합계</div>`
           : `${M.won(r.principal)}${r.bank ? '<div class="muted">은행 투자원금</div>' : ''}`)
           : `<span class="muted">${h.kind === 'cash' ? '현금' : '-'}</span>`}</td>
@@ -1501,7 +1501,7 @@ function mountInvest() {
         <td><button class="btn btn-quiet" data-f="del">✕</button></td>
       </tr>` : !M.groupShare(f.group) ? '' : `
       <tr><td>${esc(f.date)}</td><td style="white-space:normal;min-width:150px">${esc(f.memo || '')}</td>
-        <td>${esc(M.GROUP_NAMES[f.group] || f.group)}</td>
+        <td>${esc(M.groupLabel(f.group || 'jeonbuk'))}</td>
         <td class="num ${f.amount < 0 ? 'neg' : ''}">${M.won(f.amount, { sign: true })}</td>
         <td>${f.include !== false ? '○' : '<span class="muted">제외</span>'}</td>
         <td style="white-space:normal;max-width:220px"><span class="muted">${esc(f.note || '')}</span></td></tr>`)).join('');

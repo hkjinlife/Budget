@@ -178,7 +178,14 @@ export function investSummary() {
   return { groups, fx, fund, total };
 }
 
-export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', crypto_wife: '코인 (아내)', etc: '기타' };
+export const GROUP_NAMES = { jeonbuk: '전북은행 (펀드+외화)', crypto: '비트코인', crypto_wife: '비트코인', etc: '기타' };
+
+/** 투자 묶음 이름. 주인이 한 사람이면 이름을 붙인다 (예: '비트코인 (아내 이름)') — 같은 이름의 묶음을 구별하려고 */
+export function groupLabel(k) {
+  const base = GROUP_NAMES[k] || k;
+  const o = state.data.investment?.groupOwners?.[k];
+  return typeof o === 'string' && !/\(/.test(base) ? `${base} (${userName(o)})` : base;
+}
 
 
 /* ---------- 보험 ---------- */
