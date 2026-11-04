@@ -2659,6 +2659,94 @@ function mountInsurance() {
   });
 }
 
+/* ================= 메모 ================= */
+// 나중에 찾아볼 것을 적어 두는 곳(memos). 첫 줄은 제목, '## '로 시작하면 소제목, '- '로 시작하면 목록으로 보인다.
+const memoList = () => (state.data.memos || []).filter((m) => !m.deleted);
+const memoDate = (mt) => {
+  const d = new Date(`${mt}Z`);
+  return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+};
+
+function memoHtml(text) {
+  const lines = String(text || '').split('\n');
+  while (lines.length && !lines[0].trim()) lines.shift();
+  const title = (lines.shift() || '').replace(/^#+\s*/, '').trim() || '제목 없음';
+  const out = [];
+  let items = null;
+  const flush = () => { if (items) { out.push(`<ul class="tight">${items.join('')}</ul>`); items = null; } };
+  lines.forEach((raw) => {
+    const line = raw.trim();
+    if (!line) { flush(); return; }
+    if (/^#+\s/.test(line)) { flush(); out.push(`<h3 style="margin:14px 0 4px">${esc(line.replace(/^#+\s*/, ''))}</h3>`); return; }
+    if (/^[-·•]\s/.test(line)) { (items ||= []).push(`<li>${esc(line.slice(2).trim())}</li>`); return; }
+    flush();
+    out.push(`<p class="muted" style="margin:4px 0 0">${esc(line)}</p>`);
+  });
+  flush();
+  return { title, body: out.join('') };
+}
+
+function memoView() {
+  const list = memoList();
+  if (editable()) {
+    return `
+  <div class="card">
+    <div class="card-head"><h2>메모</h2><button class="btn btn-primary" id="memoAdd">새 메모</button></div>
+    <p class="muted">첫 줄은 제목입니다. '## '로 시작하는 줄은 소제목, '- '로 시작하는 줄은 목록으로 보입니다. 적는 대로 저장됩니다.</p>
+  </div>
+  ${list.map((m) => `<div class="card">
+    <textarea data-memo="${esc(m.id)}" rows="${Math.min(24, Math.max(6, String(m.text || '').split('\n').length + 1))}">${esc(m.text)}</textarea>
+    <div class="btn-row" style="margin-top:8px"><button class="btn btn-quiet" data-memo-del="${esc(m.id)}">✕ 지우기</button></div>
+  </div>`).join('')}`;
+  }
+  const shown = list.filter((m) => String(m.text || '').trim());
+  if (!shown.length) {
+    return `<div class="card"><h2>메모가 없습니다</h2>
+      <p class="muted">나중에 찾아볼 것(예: 카드를 바꿀 때 옮길 결제)을 적어 두는 곳입니다. 위쪽 '편집'을 누르면 적을 수 있습니다.</p></div>`;
+  }
+  return `${shown.map((m) => {
+    const { title, body } = memoHtml(m.text);
+    return `<div class="card"><div class="card-head"><h2>${esc(title)}</h2>
+      ${m.mt ? `<span class="muted">${esc(memoDate(m.mt))} 고침</span>` : ''}</div>${body}</div>`;
+  }).join('')}
+  <p class="muted">고치거나 새로 적으려면 위쪽 '편집'을 누르세요.</p>`;
+}
+
+let memoTimer = null;
+function mountMemo() {
+  const add = document.getElementById('memoAdd');
+  if (add) {
+    add.onclick = () => {
+      state.data.memos ||= [];
+      const m = { id: `memo_${Date.now().toString(36)}`, text: '' };
+      markEdited(m);
+      state.data.memos.push(m);
+      touch(); render();
+      document.querySelector(`[data-memo="${m.id}"]`)?.focus();
+    };
+  }
+  document.querySelectorAll('[data-memo]').forEach((el) => {
+    el.oninput = () => {
+      const m = (state.data.memos || []).find((x) => x.id === el.dataset.memo);
+      if (!m) return;
+      m.text = el.value;
+      markEdited(m);
+      // 글자마다 저장하지 않고, 잠깐 멈추면 저장한다 (고친 내용은 바로 메모에 들어가 있다)
+      clearTimeout(memoTimer);
+      memoTimer = setTimeout(() => touch(), 800);
+    };
+  });
+  document.querySelectorAll('[data-memo-del]').forEach((b) => {
+    b.onclick = () => {
+      const m = (state.data.memos || []).find((x) => x.id === b.dataset.memoDel);
+      if (!m || !confirm('이 메모를 지울까요?')) return;
+      m.deleted = true;
+      markEdited(m);
+      touch(); render();
+    };
+  });
+}
+
 /* ================= 라우팅 ================= */
 const VIEWS = {
   dashboard: [dashboard, mountDashboard],
@@ -2670,6 +2758,7 @@ const VIEWS = {
   gift: [giftView, mountGift],
   monthly: [monthlyView, mountMonthly],
   report: [reportView, mountReport],
+  memo: [memoView, mountMemo],
   settings: [settings, mountSettings],
 };
 
